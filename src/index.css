@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Opcional: estilos globales */
+body {
+  @apply bg-slate-950 text-slate-50;
+}
+
+/* --- FIX PARA ZOOM EN MÓVILES --- */
+/* Forza tamaño de letra 16px en inputs solo en dispositivos móviles.
+   Esto evita que el navegador haga zoom automático al escribir. */
+@media (max-width: 640px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Oculta barras de scroll en contenedores con la clase no-scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE y Edge */
+  scrollbar-width: none;    /* Firefox */
+}
+/* --- ANIMACIONES CSS --- */
+/* Las definimos aquí para mantener el JS limpio */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0; 
+    transform: translateY(20px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.8s ease-out forwards;
+}
+
+.animate-slideUp {
+  opacity: 0; /* Inicia invisible */
+  animation: slideUp 0.6s ease-out forwards;
+}
