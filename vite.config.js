@@ -16,8 +16,6 @@ export default defineConfig({
       input: {
         // Página principal (clientes)
         main: resolve(__dirname, "index.html"),
-        // Página del administrador
-        admin: resolve(__dirname, "admin.html"),
       },
     },
   },
