@@ -25,6 +25,39 @@ const CANCHAS = [
   { id: "3", nombre: "Cancha 3", descripcion: "Muro | Césped Std" },
 ];
 
+
+// Genera la lista de horarios dinámicamente a partir de la configuración
+// global de apertura/cierre y duración de turno.
+function generarHorariosDesdeConfig(horaApertura, horaCierre, duracionMinutos) {
+  if (!horaApertura || !horaCierre || !duracionMinutos) return [];
+
+  const [hA, mA] = horaApertura.split(":").map(Number);
+  const [hC, mC] = horaCierre.split(":").map(Number);
+
+  let inicio = hA * 60 + mA;
+  let fin = hC * 60 + mC;
+
+  // Si el cierre es menor o igual que la apertura, asumimos que cierra al día siguiente
+  // (por ejemplo: 13:00 → 02:00)
+  if (fin <= inicio) {
+    fin += 24 * 60;
+  }
+
+  const slots = [];
+
+  for (let t = inicio; t < fin; t += duracionMinutos) {
+    const hora = Math.floor(t / 60) % 24;
+    const min = t % 60;
+
+    const hh = String(hora).padStart(2, "0");
+    const mm = String(min).padStart(2, "0");
+
+    slots.push(`${hh}:${mm}`);
+  }
+
+  return slots;
+}
+
 // Utilidades
 const formatearFechaLarga = (fecha) => {
   if (!fecha) return "Seleccioná una fecha";
@@ -40,6 +73,9 @@ const getFechaHoy = () => {
 };
 
 export default function App() {
+  const [config, setConfig] = useState(null);
+  const [horariosConfig, setHorariosConfig] = useState(HORARIOS);
+
   const [fechaSeleccionada, setFechaSeleccionada] = useState("");
   const [canchaSeleccionada, setCanchaSeleccionada] = useState("1");
   const [horaSeleccionada, setHoraSeleccionada] = useState("");
@@ -56,6 +92,37 @@ export default function App() {
 
   const [toast, setToast] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
+
+  // Carga la configuración global (horarios, duración de turno, seña)
+  // y genera el arreglo de horarios que se muestra al cliente.
+  useEffect(() => {
+    const cargarConfigPublica = async () => {
+      try {
+        const res = await fetch(`${API_URL}/config`);
+        if (!res.ok) {
+          console.error("No se pudo cargar la configuración pública");
+          return;
+        }
+
+        const data = await res.json();
+        setConfig(data);
+
+        const horariosGenerados = generarHorariosDesdeConfig(
+          data.hora_apertura,
+          data.hora_cierre,
+          data.duracion_turno_minutos || 60
+        );
+
+        if (horariosGenerados.length > 0) {
+          setHorariosConfig(horariosGenerados);
+        }
+      } catch (error) {
+        console.error("Error cargando configuración pública:", error);
+      }
+    };
+
+    cargarConfigPublica();
+  }, []);
 
   // -----------------------------------
   // Toast
@@ -116,7 +183,7 @@ export default function App() {
   // -----------------------------------
   // Obtener reservas backend
   // -----------------------------------
-    const recargarReservas = async () => {
+  const recargarReservas = async () => {
     if (!canchaSeleccionada) return;
 
     const fecha = fechaSeleccionada || getFechaHoy();
@@ -140,7 +207,6 @@ export default function App() {
     }
   };
 
-
   useEffect(() => {
     recargarReservas();
   }, [fechaSeleccionada, canchaSeleccionada]);
@@ -154,7 +220,6 @@ export default function App() {
         r.estado === "confirmada" && String(r.hora).slice(0, 5) === hora
     );
 
-
   const esHorarioPasado = (hora) => {
     if (!fechaSeleccionada) return false;
     const [Y, M, D] = fechaSeleccionada.split("-").map(Number);
@@ -162,7 +227,7 @@ export default function App() {
     return new Date(Y, M - 1, D, h, m) < new Date();
   };
 
-// Verifica si la hora está bloqueada por torneo/cierre
+  // Verifica si la hora está bloqueada por torneo/cierre
   const esBloqueado = (hora) => {
     if (!fechaSeleccionada) return false;
     if (!bloqueosBackend || bloqueosBackend.length === 0) return false;
@@ -193,7 +258,6 @@ export default function App() {
       return minutosHora >= desdeMin && minutosHora <= hastaMin;
     });
   };
-
 
   // -----------------------------------
   // Selección de horario
@@ -374,7 +438,7 @@ export default function App() {
             </div>
 
             <ListaHorarios
-              horarios={HORARIOS}
+              horarios={horariosConfig}
               fechaSeleccionada={fechaSeleccionada}
               estaReservado={estaReservado}
               esHorarioPasado={esHorarioPasado}
@@ -390,7 +454,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 pb-24">
       <header className="relative bg-gradient-to-br from-emerald-900 via-slate-900 to-slate-950 pb-10 pt-8 rounded-b-[2.5rem] shadow-xl mb-8">
-        <div className="relative z-10 flex flex-col items-center text-center">
+        <div className="relative z-10 flex flex-col items-center textcenter">
           <WeatherWidget />
           <span className="text-xs font-bold tracking-widest text-emerald-400 uppercase mt-2">
             Sistema de Reservas
