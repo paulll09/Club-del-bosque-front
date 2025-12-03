@@ -222,95 +222,79 @@ export default function App() {
 
 const esHorarioPasado = (hora) => {
   if (!fechaSeleccionada) return false;
-
-  const ahora = new Date();
-  const hoySinHora = new Date(
-    ahora.getFullYear(),
-    ahora.getMonth(),
-    ahora.getDate()
-  );
+  if (!config) return false; // si todavía no cargó la config, no marcamos nada como pasado
 
   const [Y, M, D] = fechaSeleccionada.split("-").map(Number);
-  const fechaSelSinHora = new Date(Y, M - 1, D);
-
-  // Si la fecha seleccionada es anterior a hoy → todo pasado
-  if (fechaSelSinHora < hoySinHora) return true;
-
-  // Si la fecha seleccionada es posterior a hoy → nada pasado
-  if (fechaSelSinHora > hoySinHora) return false;
-
-  // Acá: fechaSeleccionada es HOY
   const [h, m] = hora.split(":").map(Number);
-  const slotMin = h * 60 + m;
-  const ahoraMin = ahora.getHours() * 60 + ahora.getMinutes();
 
-  // Si no hay config, hacemos comparación simple
-  if (!config || !config.hora_apertura || !config.hora_cierre) {
-    return slotMin <= ahoraMin;
-  }
-
-  // Detectar si la jornada cruza medianoche
   const [hA, mA] = config.hora_apertura.split(":").map(Number);
   const [hC, mC] = config.hora_cierre.split(":").map(Number);
+
   const aperturaMin = hA * 60 + mA;
   const cierreMin = hC * 60 + mC;
+  const horaMin = h * 60 + m;
 
-  // Jornada NORMAL (no cruza medianoche) → comparación simple en el día
-  if (cierreMin > aperturaMin) {
-    return slotMin <= ahoraMin;
+  const cruzaMedianoche = cierreMin <= aperturaMin;
+
+  // Fecha base que el usuario eligió en el calendario
+  let fechaReal = new Date(Y, M - 1, D, h, m);
+
+  // Si cruza medianoche y el slot es de madrugada (< apertura),
+  // lo consideramos como el día siguiente.
+  if (cruzaMedianoche && horaMin < aperturaMin) {
+    const base = new Date(Y, M - 1, D);
+    base.setDate(base.getDate() + 1);
+    fechaReal = new Date(
+      base.getFullYear(),
+      base.getMonth(),
+      base.getDate(),
+      h,
+      m
+    );
   }
 
-  // Jornada que CRUZA medianoche (ej: 14:00 → 02:00)
-  // Los horarios con minutos < aperturaMin son de la "madrugada siguiente".
-  const slotEsMadrugada = slotMin < aperturaMin;
-
-  let slotComparacion = slotMin;
-  let ahoraComparacion = ahoraMin;
-
-  // Si el horario es de madrugada, lo llevamos al "día siguiente" sumando 24h
-  if (slotEsMadrugada) {
-    slotComparacion += 24 * 60;
-  }
-
-  // En el día de hoy, desde el punto de vista del usuario:
-  // - 14:00..23:59 se comparan normal
-  // - 00:00..01:59 (cuando config cruza medianoche) se consideran futuro
-  //   mientras no haya pasado el horario real.
-  return slotComparacion <= ahoraComparacion;
+  return fechaReal < new Date();
 };
 
 
   // Verifica si la hora está bloqueada por torneo/cierre
-  const esBloqueado = (hora) => {
-    if (!fechaSeleccionada) return false;
-    if (!bloqueosBackend || bloqueosBackend.length === 0) return false;
+const esBloqueado = (hora) => {
+  if (!fechaSeleccionada) return false;
+  if (!bloqueosBackend || bloqueosBackend.length === 0) return false;
 
-    // hora en minutos (ej: "18:00" → 1080)
-    const [h, m] = hora.split(":").map(Number);
-    const minutosHora = h * 60 + m;
+  // hora en minutos (ej: "18:00" → 1080)
+  const [h, m] = hora.split(":").map(Number);
+  const minutosHora = h * 60 + m;
 
-    return bloqueosBackend.some((b) => {
-      // Si no hay horas => bloqueo todo el día
-      if (!b.hora_desde && !b.hora_hasta) {
-        return true;
-      }
+  return bloqueosBackend.some((b) => {
+    // Si no hay horas => bloqueo todo el día
+    if (!b.hora_desde && !b.hora_hasta) {
+      return true;
+    }
 
-      let desdeMin = 0;
-      let hastaMin = 24 * 60;
+    let desdeMin = 0;
+    let hastaMin = 24 * 60;
 
-      if (b.hora_desde) {
-        const [dh, dm] = b.hora_desde.split(":").map(Number);
-        desdeMin = dh * 60 + dm;
-      }
+    if (b.hora_desde) {
+      const [dh, dm] = b.hora_desde.split(":").map(Number);
+      desdeMin = dh * 60 + dm;
+    }
 
-      if (b.hora_hasta) {
-        const [hh, hm] = b.hora_hasta.split(":").map(Number);
-        hastaMin = hh * 60 + hm;
-      }
+    if (b.hora_hasta) {
+      const [hh, hm] = b.hora_hasta.split(":").map(Number);
+      hastaMin = hh * 60 + hm;
+    }
 
+    // Caso normal: dentro del mismo día
+    if (desdeMin <= hastaMin) {
       return minutosHora >= desdeMin && minutosHora <= hastaMin;
-    });
-  };
+    }
+
+    // Caso especial: bloqueo que cruza medianoche (ej: 18:00 → 02:00)
+    // Queda bloqueado si está después de "desde" o antes de "hasta".
+    return minutosHora >= desdeMin || minutosHora <= hastaMin;
+  });
+};
 
   // -----------------------------------
   // Selección de horario
