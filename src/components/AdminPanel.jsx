@@ -15,6 +15,9 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
   const [reservas, setReservas] = useState([]);
   const [cargando, setCargando] = useState(false);
 
+  // Configuración del club (hora_apertura, hora_cierre, etc.)
+  const [configClub, setConfigClub] = useState(null);
+
   // Filtros avanzados
   const [filtroEstado, setFiltroEstado] = useState("todas"); // todas | activas | confirmadas | canceladas
   const [filtroCancha, setFiltroCancha] = useState("todas"); // todas | 1 | 2 | 3 ...
@@ -22,6 +25,24 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
 
   // Vista: lista o calendario
   const [vista, setVista] = useState("lista"); // "lista" | "calendario"
+
+  /**
+   * Cargar configuración del club (para entender jornadas que cruzan medianoche).
+   */
+  useEffect(() => {
+    const cargarConfig = async () => {
+      try {
+        const res = await fetch(`${apiUrl}/config`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setConfigClub(data);
+      } catch (error) {
+        console.warn("No se pudo cargar config del club:", error);
+      }
+    };
+
+    cargarConfig();
+  }, [apiUrl]);
 
   /**
    * Cargar reservas del backend para la fecha seleccionada.
@@ -162,9 +183,43 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
   });
 
   /**
+   * Helper: saber si la jornada del club cruza medianoche.
+   */
+  const cruzaMedianoche = React.useMemo(() => {
+    if (!configClub?.hora_apertura || !configClub?.hora_cierre) return false;
+    const [hA, mA] = configClub.hora_apertura.split(":").map(Number);
+    const [hC, mC] = configClub.hora_cierre.split(":").map(Number);
+    const ini = hA * 60 + mA;
+    const fin = hC * 60 + mC;
+    return fin <= ini;
+  }, [configClub]);
+
+  /**
+   * Helper: convierte "HH:MM" a minutos, ajustando si cruza medianoche.
+   * Si cruza medianoche, las horas menores a la apertura se consideran "día siguiente"
+   * y se suman 24h para que al ordenar queden al final (después de 23:xx).
+   */
+  const valorOrdenHora = (horaStr) => {
+    const [h, m] = horaStr.split(":").map(Number);
+    const total = h * 60 + m;
+
+    if (!configClub?.hora_apertura || !cruzaMedianoche) return total;
+
+    const [hA, mA] = configClub.hora_apertura.split(":").map(Number);
+    const aperturaMin = hA * 60 + mA;
+
+    if (total < aperturaMin) {
+      // madrugada del día siguiente
+      return total + 24 * 60;
+    }
+
+    return total;
+  };
+
+  /**
    * Datos para la vista calendario (usa solo reservasVisibles).
    * - canchasUnicas: columnas
-   * - horasUnicas: filas
+   * - horasUnicas: filas, ordenadas según jornada (incluyendo madrugada siguiente).
    */
   const canchasUnicas = useMemo(() => {
     const ids = reservasVisibles
@@ -178,9 +233,9 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
       .map((r) => (r.hora ? r.hora.slice(0, 5) : null))
       .filter(Boolean);
     const set = Array.from(new Set(hs));
-    // Orden tipo "HH:MM"
-    return set.sort();
-  }, [reservasVisibles]);
+    // Orden tipo jornada: primero las horas del día base, luego madrugada +1 día
+    return set.sort((a, b) => valorOrdenHora(a) - valorOrdenHora(b));
+  }, [reservasVisibles, configClub, cruzaMedianoche]);
 
   const obtenerReservaCelda = (hora, cancha) =>
     reservasVisibles.find(
@@ -189,6 +244,19 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
         r.hora &&
         r.hora.slice(0, 5) === hora
     );
+
+  /**
+   * Indica si una hora corresponde a la "madrugada del día siguiente"
+   * en una jornada que cruza medianoche.
+   */
+  const esHoraDelDiaSiguiente = (hora) => {
+    if (!configClub?.hora_apertura || !cruzaMedianoche) return false;
+    const [h, m] = hora.split(":").map(Number);
+    const total = h * 60 + m;
+    const [hA, mA] = configClub.hora_apertura.split(":").map(Number);
+    const aperturaMin = hA * 60 + mA;
+    return total < aperturaMin; // ej: 00:00, 01:00 cuando apertura es 14:00
+  };
 
   return (
     <div className="animate-fadeIn space-y-6 pb-16 w-full max-w-3xl mx-auto">
@@ -397,7 +465,7 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
 
       {/* CONTENIDO PRINCIPAL SEGÚN VISTA */}
       {vista === "lista" ? (
-        // VISTA LISTA (la que ya tenías)
+        // VISTA LISTA
         <div className="space-y-3">
           {reservasVisibles.length === 0 ? (
             <div className="text-center py-16 border-2 border-dashed border-slate-800 rounded-3xl opacity-50">
@@ -554,7 +622,14 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
                   {horasUnicas.map((hora) => (
                     <tr key={`fila-hora-${hora}`}>
                       <td className="align-top px-2 py-1 text-[11px] text-slate-300 font-mono">
-                        {hora}
+                        <div className="flex items-center gap-1">
+                          <span>{hora}</span>
+                          {esHoraDelDiaSiguiente(hora) && (
+                            <span className="text-[9px] text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded-full border border-amber-500/30 uppercase tracking-wider">
+                              +1 día
+                            </span>
+                          )}
+                        </div>
                       </td>
                       {canchasUnicas.map((cancha) => {
                         const r = obtenerReservaCelda(hora, cancha);
@@ -575,19 +650,19 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
                         const esCancelada = r.estado === "cancelada";
                         const esConfirmada = r.estado === "confirmada";
 
-                        const bg =
-                          esCancelada
-                            ? "bg-red-900/20 border-red-500/30"
-                            : esConfirmada
-                            ? "bg-emerald-900/20 border-emerald-500/30"
-                            : "bg-sky-900/20 border-sky-500/30";
+                        const bg = esCancelada
+                          ? "bg-red-900/20 border-red-500/30"
+                          : esConfirmada
+                          ? "bg-emerald-900/20 border-emerald-500/30"
+                          : "bg-sky-900/20 border-sky-500/30";
 
-                        const txt =
-                          esCancelada
-                            ? "text-red-300"
-                            : esConfirmada
-                            ? "text-emerald-300"
-                            : "text-sky-300";
+                        const txt = esCancelada
+                          ? "text-red-300"
+                          : esConfirmada
+                          ? "text-emerald-300"
+                          : "text-sky-300";
+
+                        const fechaEsDiferente = r.fecha && r.fecha !== fechaAdmin;
 
                         return (
                           <td
@@ -603,6 +678,11 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
                               <span className="text-[9px] opacity-80 truncate">
                                 {r.telefono_cliente || ""}
                                 {r.estado && ` · ${r.estado}`}
+                                {fechaEsDiferente && (
+                                  <span className="ml-1 text-[8px] uppercase opacity-80">
+                                    ({r.fecha})
+                                  </span>
+                                )}
                               </span>
                             </div>
                           </td>
