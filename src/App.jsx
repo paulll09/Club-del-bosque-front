@@ -116,7 +116,7 @@ export default function App() {
   // -----------------------------------
   // Obtener reservas backend
   // -----------------------------------
-  const recargarReservas = async () => {
+    const recargarReservas = async () => {
     if (!canchaSeleccionada) return;
 
     const fecha = fechaSeleccionada || getFechaHoy();
@@ -162,7 +162,7 @@ export default function App() {
     return new Date(Y, M - 1, D, h, m) < new Date();
   };
 
-  // Verifica si la hora está bloqueada por torneo/cierre
+// Verifica si la hora está bloqueada por torneo/cierre
   const esBloqueado = (hora) => {
     if (!fechaSeleccionada) return false;
     if (!bloqueosBackend || bloqueosBackend.length === 0) return false;
@@ -193,6 +193,7 @@ export default function App() {
       return minutosHora >= desdeMin && minutosHora <= hastaMin;
     });
   };
+
 
   // -----------------------------------
   // Selección de horario
