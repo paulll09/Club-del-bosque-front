@@ -47,6 +47,8 @@ export default function App() {
   const [reservasBackend, setReservasBackend] = useState([]);
   const [cargandoReservas, setCargandoReservas] = useState(false);
 
+  const [bloqueosBackend, setBloqueosBackend] = useState([]);
+
   const [usuario, setUsuario] = useState(null);
   const [seccionActiva, setSeccionActiva] = useState("reservar");
   const [mostrarLogin, setMostrarLogin] = useState(false);
@@ -121,15 +123,23 @@ export default function App() {
 
     setCargandoReservas(true);
     try {
-      const res = await fetch(`${API_URL}/reservas?fecha=${fecha}&id_cancha=${canchaSeleccionada}`);
-      const data = await res.json();
-      setReservasBackend(Array.isArray(data) ? data : []);
+      const [resReservas, resBloqueos] = await Promise.all([
+        fetch(`${API_URL}/reservas?fecha=${fecha}&id_cancha=${canchaSeleccionada}`),
+        fetch(`${API_URL}/bloqueos-disponibilidad?fecha=${fecha}&id_cancha=${canchaSeleccionada}`),
+      ]);
+
+      const dataReservas = await resReservas.json().catch(() => []);
+      const dataBloqueos = await resBloqueos.json().catch(() => []);
+
+      setReservasBackend(Array.isArray(dataReservas) ? dataReservas : []);
+      setBloqueosBackend(Array.isArray(dataBloqueos) ? dataBloqueos : []);
     } catch (err) {
       console.error(err);
     } finally {
       setCargandoReservas(false);
     }
   };
+
 
   useEffect(() => {
     recargarReservas();
@@ -150,6 +160,38 @@ export default function App() {
     const [Y, M, D] = fechaSeleccionada.split("-").map(Number);
     const [h, m] = hora.split(":").map(Number);
     return new Date(Y, M - 1, D, h, m) < new Date();
+  };
+
+  // Verifica si la hora está bloqueada por torneo/cierre
+  const esBloqueado = (hora) => {
+    if (!fechaSeleccionada) return false;
+    if (!bloqueosBackend || bloqueosBackend.length === 0) return false;
+
+    // hora en minutos (ej: "18:00" → 1080)
+    const [h, m] = hora.split(":").map(Number);
+    const minutosHora = h * 60 + m;
+
+    return bloqueosBackend.some((b) => {
+      // Si no hay horas => bloqueo todo el día
+      if (!b.hora_desde && !b.hora_hasta) {
+        return true;
+      }
+
+      let desdeMin = 0;
+      let hastaMin = 24 * 60;
+
+      if (b.hora_desde) {
+        const [dh, dm] = b.hora_desde.split(":").map(Number);
+        desdeMin = dh * 60 + dm;
+      }
+
+      if (b.hora_hasta) {
+        const [hh, hm] = b.hora_hasta.split(":").map(Number);
+        hastaMin = hh * 60 + hm;
+      }
+
+      return minutosHora >= desdeMin && minutosHora <= hastaMin;
+    });
   };
 
   // -----------------------------------
@@ -335,6 +377,7 @@ export default function App() {
               fechaSeleccionada={fechaSeleccionada}
               estaReservado={estaReservado}
               esHorarioPasado={esHorarioPasado}
+              esBloqueado={esBloqueado}
               seleccionarHorario={seleccionarHorario}
             />
           </div>
