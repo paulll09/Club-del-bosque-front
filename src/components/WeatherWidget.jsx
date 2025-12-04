@@ -10,7 +10,7 @@ import {
 
 export default function WeatherWidget() {
   const [clima, setClima] = useState(null);
-  const [estado, setEstado] = useState("loading"); // loading | success | error
+  const [estado, setEstado] = useState("loading");
 
   const cargarClima = async () => {
     try {
@@ -43,31 +43,45 @@ export default function WeatherWidget() {
     cargarClima();
   }, []);
 
-  // Íconos según código WMO (profesionales)
   const getIcono = (codigo) => {
-    if (codigo === 0) return <Sun size={22} strokeWidth={2} className="text-yellow-300" />;
-    if (codigo >= 1 && codigo <= 3) return <CloudSun size={22} strokeWidth={2} className="text-slate-200" />;
-    if (codigo >= 45 && codigo <= 48) return <CloudFog size={22} strokeWidth={2} className="text-slate-400" />;
-    if (codigo >= 51 && codigo <= 67) return <CloudRain size={22} strokeWidth={2} className="text-blue-300" />;
-    if (codigo >= 80 && codigo <= 99) return <CloudLightning size={22} strokeWidth={2} className="text-yellow-300" />;
+    if (codigo === 0)
+      return <Sun size={22} strokeWidth={2} className="text-yellow-300" />;
+
+    if (codigo >= 1 && codigo <= 3)
+      return <CloudSun size={22} strokeWidth={2} className="text-slate-200" />;
+
+    if (codigo >= 45 && codigo <= 48)
+      return <CloudFog size={22} strokeWidth={2} className="text-slate-400" />;
+
+    if (codigo >= 51 && codigo <= 67)
+      return <CloudRain size={22} strokeWidth={2} className="text-blue-300" />;
+
+    if (codigo >= 80 && codigo <= 99)
+      return (
+        <CloudLightning
+          size={22}
+          strokeWidth={2}
+          className="text-yellow-300"
+        />
+      );
+
     return <Cloud size={22} strokeWidth={2} className="text-slate-300" />;
   };
 
-  // Loading
+  // Loading sin animación
   if (estado === "loading") {
     return (
-      <div className="inline-flex h-9 w-32 rounded-full bg-white/5 animate-pulse"></div>
+      <div className="inline-flex h-9 w-32 rounded-full bg-white/10 border border-slate-700"></div>
     );
   }
 
-  // Error
   if (estado === "error") {
     return (
       <button
         onClick={cargarClima}
         className="inline-flex items-center gap-2 rounded-full border border-red-500/50 bg-slate-900/80 px-3 py-1.5 text-[10px] text-red-300"
       >
-        Error clima — Reintentar
+        Error — Reintentar
       </button>
     );
   }
