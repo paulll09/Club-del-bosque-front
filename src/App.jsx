@@ -22,25 +22,17 @@ import Loader from "./components/Loader";
 import LoginCliente from "./components/LoginCliente";
 import MisTurnos from "./components/MisTurnos";
 import Perfil from "./components/Perfil";
-import FormularioCliente from "./components/FormularioCliente";
 
-// Canchas
-const CANCHAS = [
-  { id: "1", nombre: "Cancha 1", descripcion: "Blindex | Césped" },
-  { id: "2", nombre: "Cancha 2", descripcion: "Blindex | Césped" },
-  { id: "3", nombre: "Cancha 3", descripcion: "Muro | Césped" },
-];
-
+/**
+ * App principal – vista cliente
+ */
 export default function App() {
-  // Selección actual
-  const [fechaSeleccionada, setFechaSeleccionada] = useState("");
-  const [canchaSeleccionada, setCanchaSeleccionada] = useState("1");
-  const [horaSeleccionada, setHoraSeleccionada] = useState("");
+  const [fechaSeleccionada, setFechaSeleccionada] = useState(getFechaHoy());
+  const [canchaSeleccionada, setCanchaSeleccionada] = useState(1);
+  const [seccionActiva, setSeccionActiva] = useState("reservar");
+  const [horaSeleccionada, setHoraSeleccionada] = useState(null);
 
-  // Navegación interna
-  const [seccionActiva, setSeccionActiva] = useState("reservar"); // reservar | turnos | perfil
-
-  // UI feedback
+  // Toast y modal de confirmación
   const [toast, setToast] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
 
@@ -75,38 +67,6 @@ export default function App() {
     return fin <= inicio;
   })();
 
-  /**
-   * Determina si un horario ya pasó teniendo en cuenta:
-   *  - La fecha seleccionada
-   *  - Si la jornada cruza medianoche o no
-   *
-   * Si la jornada cruza medianoche y la hora es menor a la apertura,
-   * el turno corresponde al día siguiente.
-   */
-  const esHorarioPasado = (horaStr) => {
-    if (!fechaSeleccionada) return false;
-
-    const [year, month, day] = fechaSeleccionada.split("-").map(Number);
-    const [h, m] = horaStr.split(":").map(Number);
-
-    let fechaTurno = new Date(year, month - 1, day, h, m);
-
-    if (config?.hora_apertura && cruzaMedianoche) {
-      const [hA, mA] = config.hora_apertura.split(":").map(Number);
-      const aperturaMin = hA * 60 + mA;
-      const totalMin = h * 60 + m;
-
-      if (totalMin < aperturaMin) {
-        const ajustada = new Date(fechaTurno);
-        ajustada.setDate(ajustada.getDate() + 1);
-        fechaTurno = ajustada;
-      }
-    }
-
-    const ahora = new Date();
-    return fechaTurno < ahora;
-  };
-
   // Toast
   const mostrarToast = (message, type = "info") =>
     setToast({ message, type });
@@ -120,41 +80,86 @@ export default function App() {
 
     if (estado === "exito" && idReserva) {
       confirmarPagoBackend(idReserva);
-    } else if (
-      (estado === "failure" || estado === "error" || estado === "pending") &&
-      idReserva
-    ) {
-      liberarTurnoFallido(idReserva);
+    } else if (estado === "failure") {
+      mostrarToast(
+        "El pago no se completó. Podés intentar nuevamente.",
+        "warning"
+      );
+    } else if (estado === "pending") {
+      mostrarToast(
+        "El pago quedó pendiente. Revisá tu cuenta de Mercado Pago.",
+        "info"
+      );
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Confirmar pago en el backend
   const confirmarPagoBackend = async (idReserva) => {
     try {
-      await fetch(`${API_URL}/reservas/confirmar/${idReserva}`, {
-        method: "POST",
-      });
+      const res = await fetch(
+        `${API_URL}/reservas/confirmar/${idReserva}`,
+        {
+          method: "POST",
+        }
+      );
 
-      mostrarToast("¡Pago exitoso! Tu reserva quedó confirmada.", "success");
-      setSeccionActiva("turnos");
-    } catch (err) {
-      mostrarToast("Error confirmando el pago.", "error");
-    } finally {
-      window.history.replaceState({}, document.title, "/");
+      const data = await res.json();
+
+      if (!res.ok) {
+        console.error("Error al confirmar reserva:", data);
+        mostrarToast(
+          "Ocurrió un problema al confirmar la reserva.",
+          "error"
+        );
+        return;
+      }
+
+      mostrarToast(
+        "Pago exitoso. Tu turno quedó confirmado.",
+        "success"
+      );
       recargarReservas();
+    } catch (error) {
+      console.error("Error confirmando el pago:", error);
+      mostrarToast(
+        "No se pudo confirmar el pago. Revisá más tarde.",
+        "error"
+      );
     }
   };
 
-  const liberarTurnoFallido = async (idReserva) => {
-    try {
-      await fetch(`${API_URL}/reservas/${idReserva}`, { method: "DELETE" });
-      mostrarToast("El pago no se completó. Turno liberado.", "warning");
-    } catch (error) {
-      console.error(error);
-    } finally {
-      window.history.replaceState({}, document.title, "/");
-      recargarReservas();
+  // Verificación si un horario está en el pasado
+  const esHorarioPasado = (hora) => {
+    if (!fechaSeleccionada) return false;
+
+    const hoyStr = getFechaHoy();
+    if (fechaSeleccionada !== hoyStr) {
+      return false;
     }
+
+    const ahora = new Date();
+    const [hSel, mSel] = hora.split(":").map(Number);
+
+    const fechaSeleccionadaDate = new Date(fechaSeleccionada);
+    const fechaHorario = new Date(
+      fechaSeleccionadaDate.getFullYear(),
+      fechaSeleccionadaDate.getMonth(),
+      fechaSeleccionadaDate.getDate(),
+      hSel,
+      mSel,
+      0
+    );
+
+    if (
+      hSel < 6 &&
+      cruzaMedianoche &&
+      config?.hora_apertura &&
+      config?.hora_cierre
+    ) {
+      fechaHorario.setDate(fechaHorario.getDate() + 1);
+    }
+
+    return fechaHorario < ahora;
   };
 
   // Selección de horario
@@ -180,10 +185,57 @@ export default function App() {
     });
   };
 
+  // Enviar reserva al backend y obtener init_point de Mercado Pago
+  const confirmarReserva = async (hora, user) => {
+    try {
+      const body = {
+        fecha: fechaSeleccionada,
+        hora,
+        id_cancha: canchaSeleccionada,
+        id_usuario: user.id,
+      };
+
+      const res = await fetch(`${API_URL}/reservas`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        console.error("Error al reservar:", data);
+        mostrarToast(
+          data?.message || "No se pudo crear la reserva.",
+          "error"
+        );
+        return;
+      }
+
+      if (data.init_point) {
+        window.location.href = data.init_point;
+      } else {
+        mostrarToast(
+          "Reserva generada, pero no se recibió enlace de pago.",
+          "warning"
+        );
+      }
+    } catch (error) {
+      console.error("Error en la reserva:", error);
+      mostrarToast(
+        "Ocurrió un error al crear la reserva.",
+        "error"
+      );
+    }
+  };
+
   // Login exitoso
   const manejarLoginSuccess = (u) => {
-    login(u); // va al contexto + localStorage
-    mostrarToast(`¡Bienvenido, ${u.nombre}!`, "success");
+    login(u);
+
+    mostrarToast(`Bienvenido, ${u.nombre}.`, "success");
 
     if (horaSeleccionada) {
       setConfirmModal({
@@ -197,214 +249,143 @@ export default function App() {
     }
   };
 
-  // Logout (usa el contexto)
-  const manejarLogout = () => {
-    logout();
-    setSeccionActiva("reservar");
-  };
-
-  // Crear reserva + MP
-  const confirmarReserva = async (hora, user) => {
-    const reserva = {
-      id_cancha: canchaSeleccionada,
-      fecha: fechaSeleccionada,
-      hora,
-      nombre_cliente: user.nombre,
-      telefono_cliente: user.telefono,
-      usuario_id: user.id,
-      estado: "pendiente",
-    };
-
-    try {
-      mostrarToast("Generando link de pago...", "info");
-
-      const res = await fetch(`${API_URL}/reservas`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reserva),
-      });
-
-      const json = await res.json();
-
-      if (res.status === 409) {
-        mostrarToast("Ese turno ya fue reservado.", "error");
-        recargarReservas();
-        return;
-      }
-
-      if (!res.ok) throw new Error(json.mensaje || "Error creando reserva");
-
-      if (json.init_point) {
-        window.location.href = json.init_point;
-      } else {
-        mostrarToast("No se generó link de pago.", "error");
-      }
-    } catch (err) {
-      mostrarToast("Error: " + err.message, "error");
-    }
-  };
-
-  // Render por sección
+  // Render de cada sección
   const renderSeccion = () => {
     if (seccionActiva === "turnos") {
-      return usuario ? (
-        <MisTurnos usuario={usuario} apiUrl={API_URL} />
-      ) : (
-        <div className="text-center mt-10 text-slate-400">
-          Iniciá sesión para ver tus turnos.
-        </div>
-      );
+      return <MisTurnos usuario={usuario} apiUrl={API_URL} />;
     }
 
     if (seccionActiva === "perfil") {
-      return usuario ? (
-        <Perfil usuario={usuario} onLogout={manejarLogout} />
-      ) : (
-        <div className="text-center mt-10 text-slate-400">
-          Iniciá sesión para ver tu perfil.
-        </div>
-      );
+      if (!usuario) {
+        return (
+          <div className="p-6 text-center text-slate-100">
+            <h2 className="text-xl font-semibold mb-2">
+              Mi Perfil
+            </h2>
+            <p className="text-sm text-slate-400 mb-4">
+              Iniciá sesión para ver y administrar tus datos.
+            </p>
+            <button
+              onClick={() => setMostrarLogin(true)}
+              className="px-4 py-2 rounded-full bg-emerald-500 text-slate-950 font-semibold text-sm hover:bg-emerald-400 transition"
+            >
+              Iniciar Sesión
+            </button>
+          </div>
+        );
+      }
+      return <Perfil usuario={usuario} onLogout={logout} />;
     }
 
-    // Sección "reservar"
     return (
-      <div className="space-y-8 animate-fadeIn">
-        {/* Paso 1: Día */}
-        <section>
-          <div className="flex items-center gap-2 mb-3 px-1">
-            <span className="w-6 h-6 flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
-              1
-            </span>
-            <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">
-              Seleccioná el día
-            </h2>
+      <div className="space-y-4 py-4">
+        <section className="bg-slate-900/60 border border-slate-800 rounded-2xl px-4 py-3 shadow-md flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-base font-semibold text-slate-100">
+              Reservá tu cancha
+            </h1>
+            <p className="text-xs text-slate-400 mt-1">
+              Elegí fecha, cancha y horario. Pagá la seña con Mercado Pago.
+            </p>
+
+            {usuario ? (
+              <div className="mt-1 flex items-center gap-2 text-sm text-emerald-300">
+                <UserCircle2 size={18} className="text-emerald-300" />
+                <span>Hola, {usuario.nombre}.</span>
+              </div>
+            ) : (
+              <button
+                onClick={() => setMostrarLogin(true)}
+                className="text-xs bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full border border-white/20 mt-3"
+              >
+                Iniciar Sesión / Registrarse
+              </button>
+            )}
           </div>
 
-          <div className="bg-slate-900/50 border border-slate-800 rounded-3xl p-4 shadow-lg">
-            <SelectorDiaCarrusel
-              fechaSeleccionada={fechaSeleccionada}
-              onSeleccionarFecha={setFechaSeleccionada}
-            />
-            <div className="mt-4 flex justify-center">
-              <input
-                type="date"
-                min={getFechaHoy()}
-                value={fechaSeleccionada}
-                onChange={(e) => setFechaSeleccionada(e.target.value)}
-                className="bg-slate-800 text-slate-200 text-xs rounded-full px-4 py-2 border border-slate-700 focus:border-emerald-500 outline-none"
-              />
-            </div>
+          <div className="hidden sm:block">
+            <WeatherWidget />
           </div>
         </section>
 
-        {/* Paso 2: Cancha */}
-        <section>
-          <div className="flex items-center gap-2 mb-3 px-1">
-            <span className="w-6 h-6 flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
-              2
-            </span>
-            <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">
-              Elegí tu cancha
+        <section className="bg-slate-900/60 border border-slate-800 rounded-2xl px-4 py-3 shadow-md">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-100">
+                Fecha
+              </h2>
+              <p className="text-[11px] text-slate-400">
+                {formatearFechaLarga(fechaSeleccionada)}
+              </p>
+            </div>
+          </div>
+
+          <SelectorDiaCarrusel
+            fechaSeleccionada={fechaSeleccionada}
+            onChange={setFechaSeleccionada}
+          />
+        </section>
+
+        <section className="bg-slate-900/60 border border-slate-800 rounded-2xl px-4 py-3 shadow-md">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-100">
+              Cancha
             </h2>
           </div>
 
           <SelectorCancha
-            canchas={CANCHAS}
             canchaSeleccionada={canchaSeleccionada}
-            onSeleccionarCancha={setCanchaSeleccionada}
+            onChange={setCanchaSeleccionada}
           />
         </section>
 
-        {/* Paso 3: Disponibilidad */}
-        <section>
-          <div className="flex items-center justify-between mb-3 px-1">
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
-                3
-              </span>
-              <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">
-                Disponibilidad
-              </h2>
-            </div>
-
-            {(cargandoReservas || cargandoConfig) && (
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-emerald-400">
-                  Actualizando
-                </span>
-                <Loader size={16} />
-              </div>
-            )}
+        <section className="bg-slate-900/60 border border-slate-800 rounded-2xl px-4 py-3 shadow-md">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-100">
+              Horarios disponibles
+            </h2>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl">
-            <div className="mb-4 pb-4 border-b border-slate-800 flex justify-between">
-              <div>
-                <p className="text-[10px] text-slate-500 uppercase font-bold">
-                  Fecha
-                </p>
-                <p className="text-emerald-300 font-medium text-sm">
-                  {formatearFechaLarga(fechaSeleccionada)}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] text-slate-500 uppercase font-bold">
-                  Cancha
-                </p>
-                <p className="text-white font-medium text-sm">
-                  #{canchaSeleccionada}
-                </p>
-              </div>
+          {cargandoConfig || cargandoReservas ? (
+            <div className="flex justify-center py-6">
+              <Loader />
             </div>
+          ) : errorConfig ? (
+            <p className="text-sm text-red-400">
+              No se pudo cargar la configuración del club.
+            </p>
+          ) : (
+            <ListaHorarios
+              horariosConfig={horariosConfig}
+              reservas={reservas}
+              bloqueos={bloqueos}
+              seleccionarHorario={seleccionarHorario}
+              estaReservado={estaReservado}
+              esBloqueado={esBloqueado}
+              esHorarioPasado={esHorarioPasado}
+              cruzaMedianoche={cruzaMedianoche}
+            />
+          )}
 
-            {errorConfig ? (
-              <p className="text-xs text-red-400">
-                No se pudo cargar la configuración del club.
-              </p>
-            ) : (
-              <ListaHorarios
-                horarios={horariosConfig}
-                fechaSeleccionada={fechaSeleccionada}
-                estaReservado={estaReservado}
-                esHorarioPasado={esHorarioPasado}
-                esBloqueado={esBloqueado}
-                seleccionarHorario={seleccionarHorario}
-              />
-            )}
-          </div>
+          <p className="mt-3 text-[11px] text-slate-400">
+            Los horarios en gris están ocupados o bloqueados. Los horarios
+            disponibles se muestran resaltados.
+          </p>
         </section>
       </div>
     );
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 pb-24">
-      <header className="relative bg-gradient-to-br from-emerald-900 via-slate-900 to-slate-950 pb-10 pt-8 rounded-b-[2.5rem] shadow-xl mb-8">
-        <div className="relative z-10 flex flex-col items-center text-center">
-          <WeatherWidget />
-          <span className="text-xs font-bold tracking-widest text-emerald-400 uppercase mt-2">
-            Sistema de Reservas
+    <div className="min-h-screen bg-slate-950 text-slate-50 pb-16">
+      <header className="border-b border-slate-800 bg-slate-950/90 backdrop-blur-sm">
+        <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
+          <span className="text-sm font-semibold tracking-tight">
+            Club del Bosque
           </span>
-          <h1 className="text-4xl font-extrabold text-white mb-1">
-            Club del{" "}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-200">
-              Bosque
-            </span>
-          </h1>
-          {usuario ? (
-            <div className="mt-1 flex items-center gap-2 text-sm text-emerald-300">
-              <UserCircle2 size={18} className="text-emerald-300" />
-              <span>Hola, {usuario.nombre}.</span>
-            </div>
-          ) : (
-            <button
-                onClick={() => setMostrarLogin(true)}
-              className="text-xs bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full border border-white/20 mt-3"
-            >
-              Iniciar Sesión / Registrarse
-            </button>
-          )}
-
+          <div className="sm:hidden">
+            <WeatherWidget />
+          </div>
         </div>
       </header>
 
@@ -431,12 +412,8 @@ export default function App() {
 
       <BottomNav
         seccionActiva={seccionActiva}
-        setSeccionActiva={(sec) => {
-          if (sec !== "reservar" && !usuario) setMostrarLogin(true);
-          else setSeccionActiva(sec);
-        }}
+        setSeccionActiva={setSeccionActiva}
       />
     </div>
   );
 }
-
