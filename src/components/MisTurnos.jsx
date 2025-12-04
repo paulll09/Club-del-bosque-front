@@ -1,6 +1,7 @@
 // src/components/MisTurnos.jsx
 import React, { useEffect, useState } from "react";
 import Loader from "./Loader";
+import ModalConfirmacion from "./ModalConfirmacion";
 
 /**
  * Componente MisTurnos
@@ -9,10 +10,11 @@ import Loader from "./Loader";
 export default function MisTurnos({ usuario, apiUrl }) {
   const [turnos, setTurnos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [modalCancel, setModalCancel] = useState(null);
 
-  // ---------------------------
+  // -----------------------------------
   // Helpers de fecha y hora
-  // ---------------------------
+  // -----------------------------------
   const esFuturoOHoy = (fechaStr, horaStr) => {
     if (!fechaStr) return false;
 
@@ -27,12 +29,14 @@ export default function MisTurnos({ usuario, apiUrl }) {
 
   const procesarFecha = (fechaStr) => {
     if (!fechaStr) return { nombreDia: "-", fechaCorta: "-" };
+
     const [anio, mes, dia] = fechaStr.split("-").map(Number);
     const fechaObj = new Date(anio, mes - 1, dia);
 
     const nombreDia = fechaObj.toLocaleDateString("es-AR", {
       weekday: "long",
     });
+
     const fechaCorta = `${String(dia).padStart(2, "0")}/${String(
       mes
     ).padStart(2, "0")}/${anio}`;
@@ -50,9 +54,9 @@ export default function MisTurnos({ usuario, apiUrl }) {
     return `${h}:${m} hs`;
   };
 
-  // ---------------------------
+  // -----------------------------------
   // Cargar turnos del backend
-  // ---------------------------
+  // -----------------------------------
   const cargarTurnos = async () => {
     if (!usuario?.id) return;
 
@@ -62,6 +66,7 @@ export default function MisTurnos({ usuario, apiUrl }) {
       if (!res.ok) {
         throw new Error("Error al obtener las reservas");
       }
+
       const data = await res.json();
 
       // Solo confirmadas y en el futuro
@@ -87,14 +92,27 @@ export default function MisTurnos({ usuario, apiUrl }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usuario]);
 
-  // ---------------------------
-  // Cancelar turno (DELETE /reservas/{id})
-  // ---------------------------
-  const cancelarTurno = async (id) => {
-    if (!window.confirm("¿Seguro que querés cancelar este turno?")) return;
+  // -----------------------------------
+  // Abrir modal de cancelación
+  // -----------------------------------
+  const abrirModalCancelacion = (turno) => {
+    const horaFormateada = formatearHora(turno.hora);
+
+    setModalCancel({
+      id: turno.id,
+      titulo: "Cancelar turno",
+      mensaje: `¿Querés cancelar el turno de las ${horaFormateada} en la cancha ${turno.id_cancha}?`,
+    });
+  };
+
+  // -----------------------------------
+  // Ejecutar cancelación (DELETE /reservas/{id})
+  // -----------------------------------
+  const ejecutarCancelacion = async () => {
+    if (!modalCancel?.id) return;
 
     try {
-      const res = await fetch(`${apiUrl}/reservas/${id}`, {
+      const res = await fetch(`${apiUrl}/reservas/${modalCancel.id}`, {
         method: "DELETE",
       });
 
@@ -107,12 +125,14 @@ export default function MisTurnos({ usuario, apiUrl }) {
     } catch (e) {
       console.error(e);
       alert("Error al cancelar el turno.");
+    } finally {
+      setModalCancel(null);
     }
   };
 
-  // ---------------------------
+  // -----------------------------------
   // Render
-  // ---------------------------
+  // -----------------------------------
   return (
     <div className="p-4 pb-24 max-w-lg mx-auto text-slate-50">
       <h2 className="text-xl font-semibold mb-4 text-center">
@@ -160,7 +180,7 @@ export default function MisTurnos({ usuario, apiUrl }) {
                   </div>
 
                   <button
-                    onClick={() => cancelarTurno(t.id)}
+                    onClick={() => abrirModalCancelacion(t)}
                     className="ml-1 flex items-center justify-center p-2 rounded-full border border-slate-700 hover:border-red-500/60 hover:bg-red-500/10 transition-colors"
                     title="Cancelar turno"
                   >
@@ -184,6 +204,16 @@ export default function MisTurnos({ usuario, apiUrl }) {
             );
           })}
         </div>
+      )}
+
+      {/* Modal de confirmación de cancelación */}
+      {modalCancel && (
+        <ModalConfirmacion
+          titulo={modalCancel.titulo}
+          mensaje={modalCancel.mensaje}
+          onConfirm={ejecutarCancelacion}
+          onCancel={() => setModalCancel(null)}
+        />
       )}
     </div>
   );
