@@ -248,7 +248,11 @@ export default function App() {
   const renderSeccion = () => {
     if (seccionActiva === "turnos") {
       return usuario ? (
-        <MisTurnos usuario={usuario} apiUrl={API_URL} />
+        <MisTurnos
+          usuario={usuario}
+          apiUrl={API_URL}
+          mostrarToast={mostrarToast}
+        />  
       ) : (
         <div className="text-center mt-10 text-slate-400">
           Iniciá sesión para ver tus turnos.

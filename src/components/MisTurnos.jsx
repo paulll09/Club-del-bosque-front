@@ -3,11 +3,14 @@ import React, { useEffect, useState } from "react";
 import Loader from "./Loader";
 import ModalConfirmacion from "./ModalConfirmacion";
 
+
+
+
 /**
  * Componente MisTurnos
  * Muestra las reservas confirmadas del usuario y permite cancelarlas.
  */
-export default function MisTurnos({ usuario, apiUrl }) {
+export default function MisTurnos({ usuario, apiUrl, mostrarToast }) {
   const [turnos, setTurnos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalCancel, setModalCancel] = useState(null);
@@ -116,19 +119,20 @@ export default function MisTurnos({ usuario, apiUrl }) {
         method: "DELETE",
       });
 
-      if (!res.ok) {
+        if (!res.ok) {
         throw new Error("Error al cancelar turno");
       }
 
-      alert("Turno cancelado correctamente.");
+      mostrarToast("Turno cancelado correctamente.", "success");
       cargarTurnos();
-    } catch (e) {
-      console.error(e);
-      alert("Error al cancelar el turno.");
-    } finally {
-      setModalCancel(null);
-    }
-  };
+  } catch (e) {
+    console.error(e);
+    mostrarToast("No se pudo cancelar el turno.", "error");
+  } finally {
+    setModalCancel(null);
+  }
+};
+
 
   // -----------------------------------
   // Render
