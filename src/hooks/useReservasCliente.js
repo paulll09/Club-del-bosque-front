@@ -54,22 +54,31 @@ export function useReservasCliente(apiUrl, fechaSeleccionada, canchaSeleccionada
 
   // --- Helpers replicando la lógica actual de App.jsx ---
 
-  const estaReservado = (hora) => {
-    return reservas.some((r) => {
-      const mismaHora = String(r.hora).slice(0, 5) === hora;
+const normalizarHora = (h) => String(h).slice(0,5); // “15:00:00” → “15:00”
 
-      if (!mismaHora) return false;
+const estaReservado = (horaSeleccionada) => {
+  const horaNorm = normalizarHora(horaSeleccionada);
 
-      // Confirmada → siempre bloquear
-      if (r.estado === "confirmada") return true;
+  return reservas.some((r) => {
+    const horaReserva = normalizarHora(r.hora);
 
-      // Pendiente → bloquear, a menos que esté vencida (depende de backend)
-      if (r.estado === "pendiente") return true;
+    if (horaReserva !== horaNorm) return false;
 
-      // Cancelada o expirada → NO bloquear
-      return false;
-    });
-  };
+    switch (r.estado) {
+      case "confirmada":
+        return true; // SIEMPRE bloquea
+
+      case "pendiente":
+        return true; // pendiente → bloquea (backend reutiliza si es mismo usuario)
+
+      case "expirada":
+      case "cancelada":
+      default:
+        return false; // NO bloquea
+    }
+  });
+};
+
 
 
   const esHorarioPasado = (hora) => {
