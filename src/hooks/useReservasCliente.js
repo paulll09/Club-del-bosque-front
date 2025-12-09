@@ -21,7 +21,13 @@ import { getFechaHoy, esHorarioPasado as esHorarioPasadoHelper } from "../helper
  *  - recargarReservas: función manual para refrescar.
  *  - estaReservado, esHorarioPasado, esBloqueado: helpers de estado.
  */
-export function useReservasCliente(apiUrl, fechaSeleccionada, canchaSeleccionada) {
+export function useReservasCliente(
+  apiUrl,
+  fechaSeleccionada,
+  canchaSeleccionada,
+  usuarioActual // puede ser null si no hay login
+) {
+  const usuarioActualId = usuarioActual?.id ? Number(usuarioActual.id) : null;
   const [reservas, setReservas] = useState([]);
   const [bloqueos, setBloqueos] = useState([]);
   const [cargandoReservas, setCargandoReservas] = useState(false);
@@ -37,6 +43,7 @@ export function useReservasCliente(apiUrl, fechaSeleccionada, canchaSeleccionada
         fecha,
         idCancha: canchaSeleccionada,
         apiUrl,
+        idUsuario: usuarioActualId,
       });
 
       setReservas(r);
@@ -61,20 +68,34 @@ const estaReservado = (horaSeleccionada) => {
 
   return reservas.some((r) => {
     const horaReserva = normalizarHora(r.hora);
-
     if (horaReserva !== horaNorm) return false;
 
-    switch (r.estado) {
+    const estado = r.estado;
+    const reservaUsuarioId = r.usuario_id ? Number(r.usuario_id) : null;
+
+    switch (estado) {
       case "confirmada":
-        return true; // SIEMPRE bloquea
+        // Siempre bloquea la hora para todos
+        return true;
 
       case "pendiente":
-        return true; // pendiente → bloquea (backend reutiliza si es mismo usuario)
+        // Si es del mismo usuario logueado, NO bloqueamos visualmente la hora.
+        // Así puede reintentar reservar/pagar ese turno.
+        if (
+          usuarioActualId !== null &&
+          reservaUsuarioId !== null &&
+          reservaUsuarioId === usuarioActualId
+        ) {
+          return false;
+        }
+
+        // Para otros usuarios, sí bloquea
+        return true;
 
       case "expirada":
       case "cancelada":
       default:
-        return false; // NO bloquea
+        return false;
     }
   });
 };

@@ -56,14 +56,15 @@ export default function App() {
   } = useConfigClub(API_URL);
 
   // Reservas y bloqueos
-  const {
-    reservas,
-    bloqueos,
-    cargandoReservas,
-    recargarReservas,
-    estaReservado,
-    esBloqueado,
-  } = useReservasCliente(API_URL, fechaSeleccionada, canchaSeleccionada);
+const {
+  reservas,
+  bloqueos,
+  cargandoReservas,
+  recargarReservas,
+  estaReservado,
+  esBloqueado,
+} = useReservasCliente(API_URL, fechaSeleccionada, canchaSeleccionada, usuario);
+
 
   // Indica si la jornada cruza medianoche
   const cruzaMedianoche = (() => {
@@ -145,7 +146,7 @@ export default function App() {
     }
   };
 
-  const liberarTurnoFallido = async (idReserva) => {
+   liberarTurnoFallido = async (idReserva) => {
     try {
       await fetch(`${API_URL}/reservas/cancelar/${idReserva}`, {
         method: "POST",
