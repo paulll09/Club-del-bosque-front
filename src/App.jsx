@@ -33,7 +33,7 @@ const CANCHAS = [
 
 export default function App() {
   // Selección actual
-  const [fechaSeleccionada, setFechaSeleccionada] = useState("");
+  const [fechaSeleccionada, setFechaSeleccionada] = useState(getFechaHoy());
   const [canchaSeleccionada, setCanchaSeleccionada] = useState("1");
   const [horaSeleccionada, setHoraSeleccionada] = useState("");
 
@@ -55,16 +55,17 @@ export default function App() {
     errorConfig,
   } = useConfigClub(API_URL);
 
-  // Reservas y bloqueos
-  const {
-    reservas,
-    bloqueos,
-    cargandoReservas,
-    recargarReservas,
-    estaReservado,
-    esBloqueado,
-  } = useReservasCliente(API_URL, fechaSeleccionada, canchaSeleccionada, usuario);
-  //                          ↑↑↑ se agrega usuario como cuarto parámetro
+// Reservas y bloqueos
+const {
+  reservas,
+  bloqueos,
+  cargandoReservas,
+  recargarReservas,
+  estaReservado,
+  esBloqueado,
+} = useReservasCliente(API_URL, fechaSeleccionada, canchaSeleccionada, usuario);
+
+
 
   // Indica si la jornada cruza medianoche
   const cruzaMedianoche = (() => {
@@ -136,7 +137,7 @@ export default function App() {
         method: "POST",
       });
 
-      mostrarToast("Pago exitoso. Tu reserva quedó confirmada.", "success");
+      mostrarToast("¡Pago exitoso! Tu reserva quedó confirmada.", "success");
       setSeccionActiva("turnos");
     } catch (err) {
       mostrarToast("Error confirmando el pago.", "error");
@@ -146,17 +147,26 @@ export default function App() {
     }
   };
 
-  const liberarTurnoFallido = async (idReserva) => {
-    try {
-      await fetch(`${API_URL}/reservas/${idReserva}`, { method: "DELETE" });
-      mostrarToast("El pago no se completó. El turno fue liberado.", "warning");
-    } catch (error) {
-      console.error(error);
-    } finally {
-      window.history.replaceState({}, document.title, "/");
-      recargarReservas();
-    }
-  };
+const liberarTurnoFallido = async (idReserva) => {
+  try {
+    await fetch(`${API_URL}/reservas/cancelar/${idReserva}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ motivo: "fallo_pago" }),
+    });
+
+    mostrarToast("El pago no se completó. Turno liberado.", "warning");
+  } catch (error) {
+    console.error("Error al cancelar reserva tras fallo de pago:", error);
+  } finally {
+    // Limpia los parámetros de la URL y recarga las reservas
+    window.history.replaceState({}, document.title, "/");
+    recargarReservas();
+  }
+};
+
 
   // Selección de horario
   const seleccionarHorario = (hora) => {
@@ -184,7 +194,7 @@ export default function App() {
   // Login exitoso
   const manejarLoginSuccess = (u) => {
     login(u); // va al contexto + localStorage
-    mostrarToast(`Bienvenido, ${u.nombre}.`, "success");
+    mostrarToast(`¡Bienvenido, ${u.nombre}!`, "success");
 
     if (horaSeleccionada) {
       setConfirmModal({
@@ -204,7 +214,7 @@ export default function App() {
     setSeccionActiva("reservar");
   };
 
-  // Crear reserva + Mercado Pago
+  // Crear reserva + MP
   const confirmarReserva = async (hora, user) => {
     const reserva = {
       id_cancha: canchaSeleccionada,
@@ -217,7 +227,7 @@ export default function App() {
     };
 
     try {
-      mostrarToast("Generando enlace de pago...", "info");
+      mostrarToast("Generando link de pago...", "info");
 
       const res = await fetch(`${API_URL}/reservas`, {
         method: "POST",
@@ -230,11 +240,8 @@ export default function App() {
       // Caso 409: reserva ya existe
       if (res.status === 409) {
         if (json.init_point) {
-          // El backend devolvió la reserva pendiente existente para este usuario
-          mostrarToast(
-            "Tenés una reserva pendiente para este turno. Redirigiendo al pago...",
-            "warning"
-          );
+          // El backend te devolvió la reserva pendiente existente
+          mostrarToast("Tenés una reserva pendiente. Redirigiendo al pago...", "warning");
           window.location.href = json.init_point;
           return;
         }
@@ -246,21 +253,19 @@ export default function App() {
       }
 
       // Caso normal
-      if (!res.ok) {
-        // Maneja tanto "message" como "mensaje"
-        throw new Error(json.message || json.mensaje || "Error creando reserva");
-      }
+      if (!res.ok) throw new Error(json.mensaje || "Error creando reserva");
 
       // Redirección a Mercado Pago
       if (json.init_point) {
         window.location.href = json.init_point;
       } else {
-        mostrarToast("No se generó el enlace de pago.", "error");
+        mostrarToast("No se generó link de pago.", "error");
       }
     } catch (err) {
       mostrarToast("Error: " + err.message, "error");
     }
   };
+
 
   // Render por sección
   const renderSeccion = () => {
@@ -426,6 +431,7 @@ export default function App() {
               Iniciar Sesión / Registrarse
             </button>
           )}
+
         </div>
       </header>
 
@@ -460,3 +466,4 @@ export default function App() {
     </div>
   );
 }
+
