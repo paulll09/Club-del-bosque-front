@@ -62,22 +62,41 @@ export function useReservasCliente(apiUrl, fechaSeleccionada, canchaSeleccionada
    * Devuelve true si la hora está reservada (pendiente o confirmada) por
    * cualquier usuario. Estados cancelada/expirada NO bloquean.
    */
-  const estaReservado = (horaSeleccionada) => {
-    const horaNorm = normalizarHora(horaSeleccionada);
+  const estaReservado = useCallback(
+  (horaStr) => {
+    if (!horaStr) return false;
+
+    // Normalizamos la hora del slot: "HH:MM"
+    const horaSlot = horaStr.length >= 5 ? horaStr.slice(0, 5) : horaStr;
 
     return reservas.some((r) => {
-      const horaReserva = normalizarHora(r.hora);
-      if (horaReserva !== horaNorm) return false;
+      if (!r || !r.hora) return false;
 
-      const estado = String(r.estado || "").toLowerCase();
+      // Normalizamos la hora de la reserva de BD: puede venir "HH:MM:SS"
+      const horaReserva = r.hora.slice(0, 5);
+      const estado = (r.estado || "").toLowerCase();
 
-      if (estado === "confirmada") return true; // siempre bloquea
-      if (estado === "pendiente") return true;  // también bloquea visualmente
+      // Si no coincide la hora, no nos interesa esta reserva
+      if (horaReserva !== horaSlot) return false;
 
-      // expirada / cancelada / otro → no bloquea
+      // 1) Confirmada => SIEMPRE bloquea para todos
+      if (estado === "confirmada") {
+        return true;
+      }
+
+      if (estado === "pendiente") {
+        if (usuario && r.usuario_id === usuario.id) {
+          return false;
+        }
+        return true;
+      }
+
       return false;
     });
-  };
+  },
+  [reservas, usuario]
+);
+
 
   const esHorarioPasado = (hora) => {
     return esHorarioPasadoHelper(fechaSeleccionada, hora);
