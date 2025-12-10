@@ -59,44 +59,27 @@ export function useReservasCliente(apiUrl, fechaSeleccionada, canchaSeleccionada
   const normalizarHora = (h) => String(h).slice(0, 5);
 
   /**
-   * Devuelve true si la hora está reservada (pendiente o confirmada) por
-   * cualquier usuario. Estados cancelada/expirada NO bloquean.
+   * Devuelve true si la hora está reservada de forma definitiva (estado CONFIRMADA).
+   * Las reservas pendientes NO bloquean visualmente el horario en la lista.
+   * El backend igual valida pendientes y puede devolver 409 si otro usuario intenta reservar.
    */
-  const estaReservado = useCallback(
-  (horaStr) => {
-    if (!horaStr) return false;
+  const estaReservado = (horaSeleccionada) => {
+    if (!horaSeleccionada) return false;
 
-    // Normalizamos la hora del slot: "HH:MM"
-    const horaSlot = horaStr.length >= 5 ? horaStr.slice(0, 5) : horaStr;
+    const horaNorm = normalizarHora(horaSeleccionada);
 
     return reservas.some((r) => {
       if (!r || !r.hora) return false;
 
-      // Normalizamos la hora de la reserva de BD: puede venir "HH:MM:SS"
-      const horaReserva = r.hora.slice(0, 5);
-      const estado = (r.estado || "").toLowerCase();
+      const horaReserva = normalizarHora(r.hora);
+      if (horaReserva !== horaNorm) return false;
 
-      // Si no coincide la hora, no nos interesa esta reserva
-      if (horaReserva !== horaSlot) return false;
+      const estado = String(r.estado || "").toLowerCase();
 
-      // 1) Confirmada => SIEMPRE bloquea para todos
-      if (estado === "confirmada") {
-        return true;
-      }
-
-      if (estado === "pendiente") {
-        if (usuario && r.usuario_id === usuario.id) {
-          return false;
-        }
-        return true;
-      }
-
-      return false;
+      // Solo bloqueamos si está confirmada
+      return estado === "confirmada";
     });
-  },
-  [reservas, usuario]
-);
-
+  };
 
   const esHorarioPasado = (hora) => {
     return esHorarioPasadoHelper(fechaSeleccionada, hora);
@@ -146,4 +129,3 @@ export function useReservasCliente(apiUrl, fechaSeleccionada, canchaSeleccionada
     esBloqueado,
   };
 }
-
