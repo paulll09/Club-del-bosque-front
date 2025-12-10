@@ -1,9 +1,7 @@
 // src/hooks/useReservasCliente.js
 import { useCallback, useEffect, useState } from "react";
 import { obtenerReservasYBloqueos } from "../services/apiReservas";
-import {
-  esHorarioPasado as esHorarioPasadoHelper,
-} from "../helpers/fecha";
+import { esHorarioPasado as esHorarioPasadoHelper } from "../helpers/fecha";
 
 /**
  * Hook: useReservasCliente
@@ -48,12 +46,18 @@ export function useReservasCliente(
       setCargandoReservas(true);
 
       const { reservas: resApi, bloqueos: bloqApi } =
-        await obtenerReservasYBloqueos(apiUrl, fechaSeleccionada, canchaSeleccionada);
+        await obtenerReservasYBloqueos({
+          apiUrl,
+          fecha: fechaSeleccionada,
+          idCancha: canchaSeleccionada,
+        });
 
       setReservas(resApi || []);
       setBloqueos(bloqApi || []);
     } catch (error) {
       console.error("Error cargando reservas/bloqueos:", error);
+      setReservas([]);
+      setBloqueos([]);
     } finally {
       setCargandoReservas(false);
     }
@@ -76,7 +80,7 @@ export function useReservasCliente(
   /**
    * Verifica si una hora está reservada para el usuario actual:
    *  - 'confirmada' bloquea siempre.
-   *  - 'pendiente' bloquea para otros usuarios, pero NO para el mismo usuario
+   *  - 'pendiente' bloquea para otros usuarios, pero no para el mismo usuario
    *    (para que pueda reintentar pagar la seña).
    */
   const estaReservado = (horaSeleccionada) => {
@@ -97,7 +101,7 @@ export function useReservasCliente(
           return true;
 
         case "pendiente":
-          // Si es la reserva pendiente del mismo usuario, NO bloquea visualmente
+          // Si es la reserva pendiente del mismo usuario, no bloquea visualmente
           if (
             usuarioActualId !== null &&
             reservaUsuarioId !== null &&
