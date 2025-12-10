@@ -55,7 +55,7 @@ export default function App() {
     errorConfig,
   } = useConfigClub(API_URL);
 
-  // Reservas y bloqueos
+// Reservas y bloqueos
 const {
   reservas,
   bloqueos,
@@ -64,6 +64,7 @@ const {
   estaReservado,
   esBloqueado,
 } = useReservasCliente(API_URL, fechaSeleccionada, canchaSeleccionada, usuario);
+
 
 
   // Indica si la jornada cruza medianoche
@@ -146,25 +147,25 @@ const {
     }
   };
 
-   liberarTurnoFallido = async (idReserva) => {
-    try {
-      await fetch(`${API_URL}/reservas/cancelar/${idReserva}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ motivo: "fallo_pago" }),
-      });
+const liberarTurnoFallido = async (idReserva) => {
+  try {
+    await fetch(`${API_URL}/reservas/cancelar/${idReserva}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ motivo: "fallo_pago" }),
+    });
 
-      mostrarToast("El pago no se completó. Turno liberado.", "warning");
-    } catch (error) {
-      console.error("Error al cancelar reserva tras fallo de pago:", error);
-    } finally {
-      // Limpia los parámetros de la URL y recarga las reservas
-      window.history.replaceState({}, document.title, "/");
-      recargarReservas();
-    }
-  };
+    mostrarToast("El pago no se completó. Turno liberado.", "warning");
+  } catch (error) {
+    console.error("Error al cancelar reserva tras fallo de pago:", error);
+  } finally {
+    // Limpia los parámetros de la URL y recarga las reservas
+    window.history.replaceState({}, document.title, "/");
+    recargarReservas();
+  }
+};
 
 
   // Selección de horario

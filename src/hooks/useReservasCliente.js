@@ -1,7 +1,10 @@
 // src/hooks/useReservasCliente.js
 import { useCallback, useEffect, useState } from "react";
 import { obtenerReservasYBloqueos } from "../services/apiReservas";
-import { getFechaHoy, esHorarioPasado as esHorarioPasadoHelper } from "../helpers/fecha";
+import {
+  getFechaHoy,
+  esHorarioPasado as esHorarioPasadoHelper,
+} from "../helpers/fecha";
 
 /**
  * Hook: useReservasCliente
@@ -13,13 +16,6 @@ import { getFechaHoy, esHorarioPasado as esHorarioPasadoHelper } from "../helper
  *      - esHorarioPasado(hora)
  *      - esBloqueado(hora)
  *  - Volver a cargar automáticamente cuando cambian fecha o cancha.
- *
- * Devuelve:
- *  - reservas: array de reservas del backend.
- *  - bloqueos: array de bloqueos.
- *  - cargandoReservas: boolean de carga.
- *  - recargarReservas: función manual para refrescar.
- *  - estaReservado, esHorarioPasado, esBloqueado: helpers de estado.
  */
 export function useReservasCliente(
   apiUrl,
@@ -27,115 +23,114 @@ export function useReservasCliente(
   canchaSeleccionada,
   usuarioActual // puede ser null si no hay login
 ) {
-  const usuarioActualId = usuarioActual?.id ? Number(usuarioActual.id) : null;
   const [reservas, setReservas] = useState([]);
   const [bloqueos, setBloqueos] = useState([]);
   const [cargandoReservas, setCargandoReservas] = useState(false);
 
-  const recargarReservas = useCallback(async () => {
-    if (!canchaSeleccionada) return;
+  const usuarioActualId =
+    usuarioActual && usuarioActual.id ? Number(usuarioActual.id) : null;
 
-    const fecha = fechaSeleccionada || getFechaHoy();
+  /**
+   * Carga reservas y bloqueos desde el backend.
+   */
+  const cargarReservasYBloqueos = useCallback(async () => {
+    if (!fechaSeleccionada || !canchaSeleccionada) return;
 
-    setCargandoReservas(true);
     try {
-      const { reservas: r, bloqueos: b } = await obtenerReservasYBloqueos({
-        fecha,
-        idCancha: canchaSeleccionada,
-        apiUrl,
-        idUsuario: usuarioActualId,
-      });
+      setCargandoReservas(true);
 
-      setReservas(r);
-      setBloqueos(b);
+      const { reservas: resApi, bloqueos: bloqApi } =
+        await obtenerReservasYBloqueos(apiUrl, fechaSeleccionada, canchaSeleccionada);
+
+      setReservas(resApi || []);
+      setBloqueos(bloqApi || []);
     } catch (error) {
-      console.error("Error al cargar reservas/bloqueos:", error);
+      console.error("Error cargando reservas/bloqueos:", error);
     } finally {
       setCargandoReservas(false);
     }
   }, [apiUrl, fechaSeleccionada, canchaSeleccionada]);
 
+  /**
+   * Recarga manual, por ejemplo luego de cancelar o crear reserva.
+   */
+  const recargarReservas = useCallback(() => {
+    cargarReservasYBloqueos();
+  }, [cargarReservasYBloqueos]);
+
+  /**
+   * Efecto: carga inicial y cada vez que cambian fecha o cancha.
+   */
   useEffect(() => {
-    recargarReservas();
-  }, [recargarReservas]);
+    cargarReservasYBloqueos();
+  }, [cargarReservasYBloqueos]);
 
-  // --- Helpers replicando la lógica actual de App.jsx ---
+  /**
+   * Verifica si una hora está reservada para el usuario actual:
+   *  - 'confirmada' bloquea siempre.
+   *  - 'pendiente' bloquea para otros usuarios, pero NO para el mismo usuario
+   *    (para que pueda reintentar pagar la seña).
+   */
+  const estaReservado = (horaSeleccionada) => {
+    if (!horaSeleccionada) return false;
 
-const normalizarHora = (h) => String(h).slice(0,5); // “15:00:00” → “15:00”
+    const horaNorm = String(horaSeleccionada).slice(0, 5); // "HH:MM"
 
-const estaReservado = (horaSeleccionada) => {
-  const horaNorm = normalizarHora(horaSeleccionada);
+    return reservas.some((r) => {
+      const horaReserva = String(r.hora).slice(0, 5);
+      if (horaReserva !== horaNorm) return false;
 
-  return reservas.some((r) => {
-    const horaReserva = normalizarHora(r.hora);
-    if (horaReserva !== horaNorm) return false;
+      const estado = r.estado;
+      const reservaUsuarioId = r.usuario_id ? Number(r.usuario_id) : null;
 
-    const estado = r.estado;
-    const reservaUsuarioId = r.usuario_id ? Number(r.usuario_id) : null;
+      switch (estado) {
+        case "confirmada":
+          // Siempre bloquea para todos
+          return true;
 
-    switch (estado) {
-      case "confirmada":
-        // Siempre bloquea la hora para todos
-        return true;
+        case "pendiente":
+          // Si es la reserva pendiente del mismo usuario, NO bloquea visualmente
+          if (
+            usuarioActualId !== null &&
+            reservaUsuarioId !== null &&
+            reservaUsuarioId === usuarioActualId
+          ) {
+            return false;
+          }
+          // Para otros usuarios sí bloquea
+          return true;
 
-      case "pendiente":
-        // Si es del mismo usuario logueado, NO bloqueamos visualmente la hora.
-        // Así puede reintentar reservar/pagar ese turno.
-        if (
-          usuarioActualId !== null &&
-          reservaUsuarioId !== null &&
-          reservaUsuarioId === usuarioActualId
-        ) {
+        case "expirada":
+        case "cancelada":
+        default:
           return false;
-        }
+      }
+    });
+  };
 
-        // Para otros usuarios, sí bloquea
-        return true;
-
-      case "expirada":
-      case "cancelada":
-      default:
-        return false;
-    }
-  });
-};
-
-
-
+  /**
+   * Envuelve el helper global para comprobar si un horario ya pasó.
+   */
   const esHorarioPasado = (hora) => {
     return esHorarioPasadoHelper(fechaSeleccionada, hora);
   };
 
   /**
    * Verifica si una hora está bloqueada por torneo/cierre parcial.
-   * Lógica copiada de App.jsx (adaptada a este hook).
    */
   const esBloqueado = (hora) => {
-    if (!fechaSeleccionada) return false;
     if (!bloqueos || bloqueos.length === 0) return false;
+    if (!hora) return false;
 
-    // hora en minutos (ej: "18:00" → 1080)
     const [h, m] = hora.split(":").map(Number);
     const minutosHora = h * 60 + m;
 
     return bloqueos.some((b) => {
-      // Si no hay horas => bloqueo todo el día
-      if (!b.hora_desde && !b.hora_hasta) {
-        return true;
-      }
+      const [hDesde, mDesde] = b.hora_desde.split(":").map(Number);
+      const [hHasta, mHasta] = b.hora_hasta.split(":").map(Number);
 
-      let desdeMin = 0;
-      let hastaMin = 24 * 60;
-
-      if (b.hora_desde) {
-        const [dh, dm] = b.hora_desde.split(":").map(Number);
-        desdeMin = dh * 60 + dm;
-      }
-
-      if (b.hora_hasta) {
-        const [hh, hm] = b.hora_hasta.split(":").map(Number);
-        hastaMin = hh * 60 + hm;
-      }
+      const desdeMin = hDesde * 60 + mDesde;
+      const hastaMin = hHasta * 60 + mHasta;
 
       return minutosHora >= desdeMin && minutosHora <= hastaMin;
     });
