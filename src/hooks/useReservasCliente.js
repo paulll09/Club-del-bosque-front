@@ -1,119 +1,166 @@
 // src/hooks/useReservasCliente.js
 import { useCallback, useEffect, useState } from "react";
 import { obtenerReservasYBloqueos } from "../services/apiReservas";
-import { getFechaHoy, esHorarioPasado as esHorarioPasadoHelper } from "../helpers/fecha";
+import {
+  getFechaHoy,
+  esHorarioPasado as esHorarioPasadoHelper,
+} from "../helpers/fecha";
 
 /**
  * Hook: useReservasCliente
  *
- * Responsabilidad:
- *  - Cargar reservas y bloqueos para la fecha y cancha seleccionadas.
- *  - Exponer helpers:
- *      - estaReservado(hora)
- *      - esHorarioPasado(hora)
- *      - esBloqueado(hora)
- *  - Volver a cargar automáticamente cuando cambian fecha o cancha.
+ * - Carga reservas y bloqueos para la fecha y cancha seleccionadas.
+ * - Expone:
+ *    - reservas, bloqueos
+ *    - cargandoReservas
+ *    - recargarReservas()
+ *    - estaReservado(hora)
+ *    - esHorarioPasado(hora)
+ *    - esBloqueado(hora)
  *
- * Devuelve:
- *  - reservas: array de reservas del backend.
- *  - bloqueos: array de bloqueos.
- *  - cargandoReservas: boolean de carga.
- *  - recargarReservas: función manual para refrescar.
- *  - estaReservado, esHorarioPasado, esBloqueado: helpers de estado.
+ * Se asume que el backend devuelve:
+ *  reservas: [
+ *    { hora: 'HH:MM:SS', estado: 'pendiente|confirmada|cancelada', ... }
+ *  ]
+ *  bloqueos: [
+ *    { tipo, hora_desde, hora_hasta, ... } o bloqueos de día completo
+ *  ]
  */
 export function useReservasCliente(apiUrl, fechaSeleccionada, canchaSeleccionada) {
   const [reservas, setReservas] = useState([]);
   const [bloqueos, setBloqueos] = useState([]);
   const [cargandoReservas, setCargandoReservas] = useState(false);
 
-  // Carga reservas + bloqueos desde el backend
-  const recargarReservas = useCallback(async () => {
-    if (!canchaSeleccionada) return;
+  /**
+   * Carga reservas y bloqueos desde el backend.
+   */
+  const recargarReservas = useCallback(
+    async (opts = {}) => {
+      const { fecha: fechaOverride, idCancha: canchaOverride } = opts;
 
-    const fecha = fechaSeleccionada || getFechaHoy();
+      const fecha = fechaOverride || fechaSeleccionada || getFechaHoy();
+      const idCancha = canchaOverride || canchaSeleccionada;
 
-    setCargandoReservas(true);
-    try {
-      const { reservas: r, bloqueos: b } = await obtenerReservasYBloqueos({
-        fecha,
-        idCancha: canchaSeleccionada,
-        apiUrl,
-      });
+      if (!fecha || !idCancha) {
+        setReservas([]);
+        setBloqueos([]);
+        return;
+      }
 
-      setReservas(r);
-      setBloqueos(b);
-    } catch (error) {
-      console.error("Error al cargar reservas/bloqueos:", error);
-    } finally {
-      setCargandoReservas(false);
-    }
-  }, [apiUrl, fechaSeleccionada, canchaSeleccionada]);
+      setCargandoReservas(true);
 
+      try {
+        const { reservas: r, bloqueos: b } = await obtenerReservasYBloqueos({
+          fecha,
+          idCancha,
+          apiUrl,
+        });
+
+        setReservas(Array.isArray(r) ? r : []);
+        setBloqueos(Array.isArray(b) ? b : []);
+
+        // Útil para debug si querés ver qué trae el back:
+        // console.log("Reservas recibidas:", r);
+        // console.log("Bloqueos recibidos:", b);
+      } catch (error) {
+        console.error("Error cargando reservas/bloqueos:", error);
+        setReservas([]);
+        setBloqueos([]);
+      } finally {
+        setCargandoReservas(false);
+      }
+    },
+    [apiUrl, fechaSeleccionada, canchaSeleccionada]
+  );
+
+  /**
+   * Carga inicial y recarga cuando cambia fecha/cancha.
+   */
   useEffect(() => {
     recargarReservas();
   }, [recargarReservas]);
 
-  // --- Helpers ---
-
-  // Normaliza cualquier string de hora a "HH:MM" (ej: "15:00:00" → "15:00", "15:00 hs" → "15:00")
-  const normalizarHora = (h) => String(h).slice(0, 5);
-
   /**
-   * Devuelve true si la hora está reservada de forma definitiva (estado CONFIRMADA).
-   * Las reservas pendientes NO bloquean visualmente el horario en la lista.
-   * El backend igual valida pendientes y puede devolver 409 si otro usuario intenta reservar.
+   * Indica si un horario está reservado.
+   *
+   * Regla actual:
+   *  - SOLO se considera reservado si el estado es 'confirmada'.
+   *  - Así, una vez que el pago se aprueba y el back cambia a confirmada,
+   *    ese horario queda bloqueado para todos los usuarios.
    */
   const estaReservado = (horaSeleccionada) => {
     if (!horaSeleccionada) return false;
 
-    const horaNorm = normalizarHora(horaSeleccionada);
+    const horaNorm = String(horaSeleccionada).slice(0, 5); // 'HH:MM'
 
     return reservas.some((r) => {
       if (!r || !r.hora) return false;
 
-      const horaReserva = normalizarHora(r.hora);
+      const horaReserva = String(r.hora).slice(0, 5);
       if (horaReserva !== horaNorm) return false;
 
-      const estado = String(r.estado || "").toLowerCase();
-
-      // Solo bloqueamos si está confirmada
+      const estado = (r.estado || "").toLowerCase();
       return estado === "confirmada";
     });
   };
 
+  /**
+   * Wrapper que delega en el helper global de fechas.
+   */
   const esHorarioPasado = (hora) => {
+    if (!fechaSeleccionada || !hora) return false;
     return esHorarioPasadoHelper(fechaSeleccionada, hora);
   };
 
   /**
-   * Verifica si una hora está bloqueada por torneo/cierre parcial.
+   * Indica si un horario está bloqueado por configuración.
+   *
+   * Soporta:
+   *  - bloqueos de día completo (tipo 'dia_completo' o campo dia_completo = 1)
+   *  - bloqueos por rango [hora_desde, hora_hasta]
    */
   const esBloqueado = (hora) => {
-    if (!fechaSeleccionada) return false;
-    if (!bloqueos || bloqueos.length === 0) return false;
+    if (!hora) return false;
+    if (!Array.isArray(bloqueos) || bloqueos.length === 0) return false;
 
-    // hora en minutos (ej: "18:00" → 1080)
-    const [h, m] = hora.split(":").map(Number);
-    const minutosHora = h * 60 + m;
+    const [hStr, mStr] = String(hora).slice(0, 5).split(":");
+    const minutosHora = parseInt(hStr, 10) * 60 + parseInt(mStr, 10);
 
     return bloqueos.some((b) => {
-      // Si no hay horas => bloqueo todo el día
-      if (!b.hora_desde && !b.hora_hasta) {
+      if (!b) return false;
+
+      const tipo = (b.tipo || "").toLowerCase();
+      const diaCompletoFlag =
+        b.dia_completo === 1 ||
+        b.dia_completo === "1" ||
+        tipo === "dia_completo" ||
+        tipo === "completo";
+
+      // Bloqueo de día completo
+      if (diaCompletoFlag) {
         return true;
       }
 
-      let desdeMin = 0;
-      let hastaMin = 24 * 60;
+      const desdeRaw =
+        b.hora_desde ||
+        b.desde_hora ||
+        b.desde ||
+        b.tramo_desde ||
+        null;
+      const hastaRaw =
+        b.hora_hasta ||
+        b.hasta_hora ||
+        b.hasta ||
+        b.tramo_hasta ||
+        null;
 
-      if (b.hora_desde) {
-        const [dh, dm] = b.hora_desde.split(":").map(Number);
-        desdeMin = dh * 60 + dm;
-      }
+      if (!desdeRaw || !hastaRaw) return false;
 
-      if (b.hora_hasta) {
-        const [hh, hm] = b.hora_hasta.split(":").map(Number);
-        hastaMin = hh * 60 + hm;
-      }
+      const [hd, md] = String(desdeRaw).slice(0, 5).split(":");
+      const [hh, mh] = String(hastaRaw).slice(0, 5).split(":");
+
+      const desdeMin = parseInt(hd, 10) * 60 + parseInt(md, 10);
+      const hastaMin = parseInt(hh, 10) * 60 + parseInt(mh, 10);
 
       return minutosHora >= desdeMin && minutosHora <= hastaMin;
     });
