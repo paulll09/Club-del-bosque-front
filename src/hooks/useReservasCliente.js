@@ -120,61 +120,57 @@ export function useReservasCliente(apiUrl, fechaSeleccionada, canchaSeleccionada
    *  - bloqueos por rango [hora_desde, hora_hasta]
    */
 // ¿Este horario está bloqueado por algún torneo/cierre/etc?
+// Convierte "HH:MM" o "HH:MM:SS" a minutos
+const horaStrToMinutes = (h) => {
+  if (!h) return null;
+  const partes = h.split(":").map(Number);
+  const HH = partes[0] ?? 0;
+  const MM = partes[1] ?? 0;
+  return HH * 60 + MM;
+};
+
 const esBloqueado = (horaStr) => {
   if (!bloqueos || bloqueos.length === 0) return false;
   if (!fechaSeleccionada) return false;
 
   const horaClienteMin = horaStrToMinutes(horaStr);
 
-  // Helper para convertir "HH:MM" o "HH:MM:SS" a minutos
-  const parseHoraToMinutes = (h) => {
-    if (!h) return null;
-    const partes = h.split(":").map(Number);
-    const HH = partes[0] ?? 0;
-    const MM = partes[1] ?? 0;
-    return HH * 60 + MM;
-  };
-
   const parseFecha = (f) => new Date(`${f}T00:00:00`);
+  const fechaSel = parseFecha(fechaSeleccionada);
 
   return bloqueos.some((b) => {
-    // Filtro por rango de fecha del bloqueo
     const fechaDesde = b.fecha_desde ? parseFecha(b.fecha_desde) : null;
     const fechaHasta = b.fecha_hasta ? parseFecha(b.fecha_hasta) : null;
-    const fechaSel = parseFecha(fechaSeleccionada);
 
+    // Validar rango de fechas
     if (fechaDesde && fechaSel < fechaDesde) return false;
     if (fechaHasta && fechaSel > fechaHasta) return false;
 
-    // -------- CASO: BLOQUEO DE DÍA COMPLETO --------
-    // Si no hay horas, es bloqueo de todo el día.
+    //BLOQUEO DE DÍA COMPLETO (si no se enviaron horas)
     if (!b.hora_desde && !b.hora_hasta) {
       return true;
     }
 
-    
-    // 00:00:00 a 23:59:59 (o 23:59)
-    const desdeMin = parseHoraToMinutes(b.hora_desde);
-    const hastaMin = parseHoraToMinutes(b.hora_hasta);
+    const desdeMin = horaStrToMinutes(b.hora_desde);
+    const hastaMin = horaStrToMinutes(b.hora_hasta);
 
+    //Día completo explícito: 00:00 a 23:59
     if (
       (desdeMin === 0 || desdeMin === null) &&
-      (hastaMin === 24 * 60 - 1 || hastaMin === 24 * 60 || hastaMin === null)
+      (hastaMin === 1439 || hastaMin === 1440 || hastaMin === null)
     ) {
-      // Cubre todo el día
       return true;
     }
 
-    // -------- CASO: BLOQUEO PARCIAL --------
+    //Bloqueo parcial
     if (desdeMin !== null && hastaMin !== null) {
-      // Rango clásico dentro del mismo día
       return horaClienteMin >= desdeMin && horaClienteMin < hastaMin;
     }
 
-    
     return false;
   });
 };
+
 
 
   return {
