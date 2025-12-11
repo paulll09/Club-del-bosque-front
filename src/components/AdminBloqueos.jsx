@@ -54,57 +54,83 @@ export default function AdminBloqueos({ apiUrl, adminToken }) {
   }, [adminToken]);
 
   const crearBloqueo = async (e) => {
-    e.preventDefault();
-    if (!adminToken) return;
+  e.preventDefault();
+  if (!adminToken) return;
 
-    if (!fechaDesde || !fechaHasta) {
-      alert("Debe seleccionar fecha desde y fecha hasta.");
+  // Validación básica de fechas
+  if (!fechaDesde || !fechaHasta) {
+    alert("Debe seleccionar fecha desde y fecha hasta.");
+    return;
+  }
+
+  // Normalización de horas opcionales
+  let horaDesdeNormalizada = horaDesde || null;
+  let horaHastaNormalizada = horaHasta || null;
+
+  // Caso: solo una de las dos horas
+  if (horaDesdeNormalizada && !horaHastaNormalizada) {
+    alert(
+      "Para un bloqueo parcial debe indicar 'hora desde' y 'hora hasta'.\n" +
+      "Si quiere bloquear todo el día, deje ambos campos vacíos."
+    );
+    return;
+  }
+
+  if (!horaDesdeNormalizada && horaHastaNormalizada) {
+    alert(
+      "Para un bloqueo parcial debe indicar 'hora desde' y 'hora hasta'.\n" +
+      "Si quiere bloquear todo el día, deje ambos campos vacíos."
+    );
+    return;
+  }
+
+  setCreando(true);
+
+  try {
+    const cuerpo = {
+      id_cancha:
+        idCancha === "todas" || idCancha === "" ? null : Number(idCancha),
+      fecha_desde: fechaDesde,
+      fecha_hasta: fechaHasta,
+      // Si no se cargaron horas, van como null,bloqueo de día completo
+      hora_desde: horaDesdeNormalizada,
+      hora_hasta: horaHastaNormalizada,
+      motivo: motivo || null,
+      tipo, 
+    };
+
+    const res = await fetch(`${apiUrl}/admin/bloqueos`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Admin-Token": adminToken,
+      },
+      body: JSON.stringify(cuerpo),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      alert(data.mensaje || "No se pudo crear el bloqueo.");
       return;
     }
 
-    setCreando(true);
-    try {
-      const cuerpo = {
-        id_cancha:
-          idCancha === "todas" || idCancha === "" ? null : Number(idCancha),
-        fecha_desde: fechaDesde,
-        fecha_hasta: fechaHasta,
-        hora_desde: horaDesde || null,
-        hora_hasta: horaHasta || null,
-        motivo: motivo || null,
-        tipo,
-      };
+    alert(data.mensaje || "Bloqueo creado correctamente.");
 
-      const res = await fetch(`${apiUrl}/admin/bloqueos`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Admin-Token": adminToken,
-        },
-        body: JSON.stringify(cuerpo),
-      });
+    // Limpiar formulario
+    setMotivo("");
+    setHoraDesde("");
+    setHoraHasta("");
 
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        alert(data.mensaje || "No se pudo crear el bloqueo.");
-        return;
-      }
-
-      alert(data.mensaje || "Bloqueo creado correctamente.");
-      // Limpiar formulario rápido
-      setMotivo("");
-      setHoraDesde("");
-      setHoraHasta("");
-      // Actualizar lista
-      cargarBloqueos();
-    } catch (error) {
-      console.error("Error al crear bloqueo:", error);
-      alert("Error de conexión.");
-    } finally {
-      setCreando(false);
-    }
-  };
+    // Refrescar lista
+    cargarBloqueos();
+  } catch (error) {
+    console.error("Error al crear bloqueo:", error);
+    alert("Error de conexión.");
+  } finally {
+    setCreando(false);
+  }
+};
 
   const eliminarBloqueo = async (id) => {
     if (!window.confirm("¿Eliminar este bloqueo de forma permanente?")) return;
