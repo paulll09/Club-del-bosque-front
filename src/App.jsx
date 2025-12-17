@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { UserCircle2 } from "lucide-react";
 import { API_URL } from "./config";
+import Footer from "./components/Footer.jsx";
+
 
 // Hooks y helpers
 import { useConfigClub } from "./hooks/useConfigClub";
@@ -436,6 +438,8 @@ const liberarTurnoFallido = async (idReserva) => {
       </header>
 
       <main className="max-w-md mx-auto px-4">{renderSeccion()}</main>
+
+      <Footer />
 
       {toast && <Toast {...toast} onClose={cerrarToast} />}
 
