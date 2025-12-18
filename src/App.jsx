@@ -38,6 +38,8 @@ export default function App() {
   const [fechaSeleccionada, setFechaSeleccionada] = useState(getFechaHoy());
   const [canchaSeleccionada, setCanchaSeleccionada] = useState("1");
   const [horaSeleccionada, setHoraSeleccionada] = useState("");
+  const [duracionHoras, setDuracionHoras] = useState(1);
+
 
   // Navegación interna
   const [seccionActiva, setSeccionActiva] = useState("reservar"); // reservar | turnos | perfil
@@ -170,28 +172,78 @@ const liberarTurnoFallido = async (idReserva) => {
 };
 
 
+// Devuelve true si el rango (1h o 2h) está libre (no reservado, no bloqueado, no pasado)
+const puedeReservarDuracion = (horaInicio, duracionHoras) => {
+  if (!horariosConfig || !Array.isArray(horariosConfig)) return false;
+
+  const idx = horariosConfig.indexOf(horaInicio);
+  if (idx === -1) return false;
+
+  // Necesito que existan todas las horas del rango dentro del array
+  const horasNecesarias = horariosConfig.slice(idx, idx + duracionHoras);
+  if (horasNecesarias.length !== duracionHoras) return false;
+
+  // Todas deben estar libres
+  return horasNecesarias.every((h) => {
+    const reservado = estaReservado ? estaReservado(h) : false;
+    const bloqueado = esBloqueado ? esBloqueado(h) : false;
+    const pasado = esHorarioPasado ? esHorarioPasado(h) : false;
+    return !reservado && !bloqueado && !pasado;
+  });
+};
+
+
+
+
+const obtenerHorasRango = (horaInicio, duracionHoras) => {
+  const idx = horariosConfig.indexOf(horaInicio);
+  return horariosConfig.slice(idx, idx + duracionHoras);
+};
+
+
+
   // Selección de horario
-  const seleccionarHorario = (hora) => {
-    if (!fechaSeleccionada)
-      return mostrarToast("Seleccioná una fecha.", "warning");
-    if (esHorarioPasado(hora))
-      return mostrarToast("Ese horario ya pasó.", "warning");
+const seleccionarHorario = (hora) => {
+  if (!fechaSeleccionada) return mostrarToast("Seleccioná una fecha.", "warning");
+  if (esHorarioPasado(hora)) return mostrarToast("Ese horario ya pasó.", "warning");
 
-    if (!usuario) {
-      setHoraSeleccionada(hora);
-      setMostrarLogin(true);
-      return;
-    }
+  if (!usuario) {
+    setHoraSeleccionada(hora);
+    setMostrarLogin(true);
+    return;
+  }
 
-    setConfirmModal({
-      titulo: "Reservar y pagar",
-      mensaje: `Vas a reservar la Cancha ${canchaSeleccionada} a las ${hora} hs.\nSe abrirá Mercado Pago para abonar la seña.`,
-      onConfirm: () => {
-        confirmarReserva(hora, usuario);
-        setConfirmModal(null);
-      },
-    });
-  };
+  const puede1h = puedeReservarDuracion(hora, 1);
+  const puede2h = puedeReservarDuracion(hora, 2);
+
+  if (!puede1h) {
+    mostrarToast("Ese turno ya no está disponible.", "error");
+    recargarReservas();
+    return;
+  }
+
+  setDuracionHoras(1);
+
+  const mensajeBase = `Vas a reservar la Cancha ${canchaSeleccionada} desde las ${hora} hs.`;
+  const detalle2h = puede2h
+    ? `\nTambién podés elegir 2 horas seguidas (${obtenerHorasRango(hora, 2).join(" y ")}).`
+    : `\n(2 horas no disponibles desde este horario).`;
+
+  setConfirmModal({
+    titulo: "Reservar y pagar",
+    mensaje: `${mensajeBase}${detalle2h}\nSe abrirá Mercado Pago para abonar la seña.`,
+    puede2h,
+
+    onConfirm: (duracionElegida = 1) => {
+      const duracionFinal = duracionElegida === 2 && !puede2h ? 1 : duracionElegida;
+      confirmarReserva(hora, usuario, duracionFinal);
+      setConfirmModal(null);
+    },
+
+    onCancel: () => setConfirmModal(null),
+  });
+};
+
 
   // Login exitoso
   const manejarLoginSuccess = (u) => {
@@ -216,57 +268,78 @@ const liberarTurnoFallido = async (idReserva) => {
     setSeccionActiva("reservar");
   };
 
-  // Crear reserva + MP
-  const confirmarReserva = async (hora, user) => {
-    const reserva = {
-      id_cancha: canchaSeleccionada,
-      fecha: fechaSeleccionada,
-      hora,
-      nombre_cliente: user.nombre,
-      telefono_cliente: user.telefono,
-      usuario_id: user.id,
-      estado: "pendiente",
-    };
+// Crear reserva + MP
+const confirmarReserva = async (hora, user, duracionHoras = 1) => {
+  // helper: suma N horas a "HH:MM" (con wrap 24h)
+  const sumarHoras = (hhmm, n) => {
+    const [h, m] = hhmm.split(":").map(Number);
+    const total = (h * 60 + m + n * 60) % (24 * 60);
+    const hh = String(Math.floor(total / 60)).padStart(2, "0");
+    const mm = String(total % 60).padStart(2, "0");
+    return `${hh}:${mm}`;
+  };
 
-    try {
-      mostrarToast("Generando link de pago...", "info");
+  // Si el usuario elige 2 horas => ["18:00","19:00"]
+  const horas = Array.from({ length: duracionHoras }, (_, i) => sumarHoras(hora, i));
 
-      const res = await fetch(`${API_URL}/reservas`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reserva),
-      });
+  const reserva = {
+    id_cancha: canchaSeleccionada,
+    fecha: fechaSeleccionada,
 
-      const json = await res.json();
+    // compatibilidad (tu backend viejo usa "hora")
+    hora,
 
-      // Caso 409: reserva ya existe
-      if (res.status === 409) {
-        if (json.init_point) {
-          // El backend te devolvió la reserva pendiente existente
-          mostrarToast("Tenés una reserva pendiente. Redirigiendo al pago...", "warning");
-          window.location.href = json.init_point;
-          return;
-        }
+    // NUEVO: para 2 horas
+    duracion_horas: duracionHoras,
+    horas,
 
-        // Si no hay init_point → es una confirmada de otro usuario
-        mostrarToast("Ese turno ya no está disponible.", "error");
-        recargarReservas();
+    nombre_cliente: user.nombre,
+    telefono_cliente: user.telefono || "", // evita null
+    usuario_id: user.id,
+    estado: "pendiente",
+  };
+
+  try {
+    mostrarToast("Generando link de pago...", "info");
+
+    const res = await fetch(`${API_URL}/reservas`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reserva),
+    });
+
+    const json = await res.json().catch(() => ({}));
+
+    // Caso 409: reserva ya existe
+    if (res.status === 409) {
+      if (json.init_point) {
+        mostrarToast(
+          "Tenés una reserva pendiente. Redirigiendo al pago...",
+          "warning"
+        );
+        window.location.href = json.init_point;
         return;
       }
 
-      // Caso normal
-      if (!res.ok) throw new Error(json.mensaje || "Error creando reserva");
-
-      // Redirección a Mercado Pago
-      if (json.init_point) {
-        window.location.href = json.init_point;
-      } else {
-        mostrarToast("No se generó link de pago.", "error");
-      }
-    } catch (err) {
-      mostrarToast("Error: " + err.message, "error");
+      mostrarToast("Ese turno ya no está disponible.", "error");
+      recargarReservas();
+      return;
     }
-  };
+
+    // Caso normal
+    if (!res.ok) throw new Error(json.mensaje || "Error creando reserva");
+
+    // Redirección a Mercado Pago
+    if (json.init_point) {
+      window.location.href = json.init_point;
+    } else {
+      mostrarToast("No se generó link de pago.", "error");
+    }
+  } catch (err) {
+    mostrarToast("Error: " + err.message, "error");
+  }
+};
+
 
 
   // Render por sección
@@ -443,14 +516,19 @@ const liberarTurnoFallido = async (idReserva) => {
 
       {toast && <Toast {...toast} onClose={cerrarToast} />}
 
-      {confirmModal && (
-        <ModalConfirmacion
-          titulo={confirmModal.titulo}
-          mensaje={confirmModal.mensaje}
-          onConfirm={confirmModal.onConfirm}
-          onCancel={() => setConfirmModal(null)}
-        />
-      )}
+    {confirmModal && (
+      <ModalConfirmacion
+        titulo={confirmModal.titulo}
+        mensaje={confirmModal.mensaje}
+        onConfirm={() => confirmModal.onConfirm(duracionHoras)}
+        onCancel={confirmModal.onCancel}
+        mostrarDuracion={true}
+        puede2h={confirmModal.puede2h}
+        duracionHoras={duracionHoras}
+        setDuracionHoras={setDuracionHoras}
+      />
+    )}
+
 
       {mostrarLogin && (
         <LoginCliente
