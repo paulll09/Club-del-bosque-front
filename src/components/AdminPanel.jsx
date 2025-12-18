@@ -171,9 +171,7 @@ export default function AdminPanel({ apiUrl, adminToken, onLogout }) {
       });
 
       if (res.ok) {
-        setReservas((prev) =>
-          prev.map((r) => (r.id === id ? { ...r, estado: "cancelada" } : r))
-        );
+        await cargarReservas();
       } else {
         alert("No se pudo cancelar la reserva.");
       }
