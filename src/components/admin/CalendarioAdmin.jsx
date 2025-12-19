@@ -1,381 +1,277 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 
-/**
- * Vista calendario del panel admin.
- *
- * - Filas: horas
- * - Columnas: canchas
- * - Celdas: Reserva / Fijo / Libre
- *
- * Props:
- * - reservas: array de reservas (del backend)
- * - fechaAdmin: "YYYY-MM-DD"
- * - configClub: { hora_apertura, hora_cierre, ... }
- * - apiUrl: URL base del backend
- * - adminToken: token admin (X-Admin-Token)
- */
+// Helpers chiquitos
+const pad2 = (n) => String(n).padStart(2, "0");
+
+const normalizarHora = (h) => {
+  if (!h) return "";
+  // admite "19:00" o "19:00:00"
+  if (h.length === 5) return `${h}:00`;
+  return h.slice(0, 8);
+};
+
+const horaLabel = (hhmmss) => {
+  const [hh, mm] = hhmmss.split(":");
+  return `${hh}:${mm}`;
+};
+
+const parseHHMM = (hhmm) => {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+};
+
+const generarHoras = (horaApertura = "14:00", horaCierre = "02:00") => {
+  // devuelve lista de "HH:MM:SS" cada 60min, soporta cruce de medianoche
+  let start = parseHHMM(horaApertura);
+  let end = parseHHMM(horaCierre);
+
+  // si cierre es menor/equal, significa que cierra al día siguiente
+  if (end <= start) end += 24 * 60;
+
+  const out = [];
+  for (let t = start; t < end; t += 60) {
+    const hh = Math.floor((t / 60) % 24);
+    const mm = t % 60;
+    out.push(`${pad2(hh)}:${pad2(mm)}:00`);
+  }
+  return out;
+};
+
+const diaSemana1a7 = (fechaYYYYMMDD) => {
+  // JS: 0 domingo..6 sábado → queremos 1 lunes..7 domingo
+  const d = new Date(`${fechaYYYYMMDD}T00:00:00`);
+  const js = d.getDay(); // 0..6
+  return js === 0 ? 7 : js; // domingo -> 7, lunes -> 1, ...
+};
+
+const estaDentroRango = (hora, desde, hasta) => {
+  // hora, desde, hasta: "HH:MM:SS" o "HH:MM"
+  const h = parseHHMM(horaLabel(normalizarHora(hora)));
+  const d = parseHHMM(horaLabel(normalizarHora(desde)));
+  const a = parseHHMM(horaLabel(normalizarHora(hasta)));
+  // rango [desde, hasta) por horas
+  return h >= d && h < a;
+};
+
 export default function CalendarioAdmin({
   reservas = [],
+  bloqueosFijos = [],
   fechaAdmin,
   configClub,
-  apiUrl,
-  adminToken,
 }) {
-  const [bloqueosFijos, setBloqueosFijos] = useState([]);
-  const [cargandoFijos, setCargandoFijos] = useState(false);
-
-  // =========================
-  // Cargar bloqueos fijos
-  // =========================
-  const cargarBloqueosFijos = async () => {
-    if (!adminToken) return;
-    setCargandoFijos(true);
-
-    try {
-      const res = await fetch(`${apiUrl}/admin/bloqueos-fijos`, {
-        headers: { "X-Admin-Token": adminToken },
-      });
-
-      const data = await res.json().catch(() => []);
-      if (!res.ok) {
-        console.warn("No se pudieron cargar bloqueos fijos:", data);
-        setBloqueosFijos([]);
-        return;
-      }
-
-      setBloqueosFijos(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.warn("Error de conexión cargando bloqueos fijos:", e);
-      setBloqueosFijos([]);
-    } finally {
-      setCargandoFijos(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!adminToken) return;
-    cargarBloqueosFijos();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adminToken, apiUrl]);
-
-  // =========================
-  // Helpers de jornada
-  // =========================
-  const cruzaMedianoche = useMemo(() => {
-    if (!configClub?.hora_apertura || !configClub?.hora_cierre) return false;
-    const [hA, mA] = configClub.hora_apertura.split(":").map(Number);
-    const [hC, mC] = configClub.hora_cierre.split(":").map(Number);
-    const ini = hA * 60 + mA;
-    const fin = hC * 60 + mC;
-    return fin <= ini;
+  const horas = useMemo(() => {
+    const apertura = configClub?.hora_apertura || "14:00";
+    const cierre = configClub?.hora_cierre || "02:00";
+    return generarHoras(apertura, cierre);
   }, [configClub]);
 
-  const valorOrdenHora = (horaStr) => {
-    const [h, m] = horaStr.split(":").map(Number);
-    const total = h * 60 + m;
+  const dow = useMemo(() => (fechaAdmin ? diaSemana1a7(fechaAdmin) : 1), [fechaAdmin]);
 
-    if (!configClub?.hora_apertura || !cruzaMedianoche) return total;
-
-    const [hA, mA] = configClub.hora_apertura.split(":").map(Number);
-    const aperturaMin = hA * 60 + mA;
-
-    // Si cruza medianoche, las horas "madrugada" van al final (sumamos 24h)
-    if (total < aperturaMin) return total + 24 * 60;
-    return total;
-  };
-
-  const hhmmToMin = (hhmm) => {
-    if (!hhmm) return null;
-    const [h, m] = hhmm.split(":").map(Number);
-    return h * 60 + m;
-  };
-
-  const getDiaSemana1a7 = (yyyyMMdd) => {
-    // JS: 0=Dom,1=Lun,...6=Sáb → lo convertimos a 1..7 (Dom=7)
-    const d = new Date(`${yyyyMMdd}T00:00:00`);
-    const js = d.getDay();
-    return js === 0 ? 7 : js;
-  };
-
-  // =========================
-  // Estructura de tabla
-  // =========================
-  const canchasUnicas = useMemo(() => {
-    // Si por algún motivo no vienen reservas en la fecha, al menos mostramos 1..3
-    const ids = reservas
-      .map((r) => r.id_cancha)
-      .filter((v) => v !== null && v !== undefined);
-
-    const set = Array.from(new Set(ids)).sort((a, b) => Number(a) - Number(b));
-    return set.length > 0 ? set : [1, 2, 3];
+  // Index reservas: cancha|hora -> reserva
+  const reservasIndex = useMemo(() => {
+    const map = new Map();
+    for (const r of reservas || []) {
+      const hora = normalizarHora(r.hora);
+      const key = `${r.id_cancha}|${hora}`;
+      map.set(key, r);
+    }
+    return map;
   }, [reservas]);
 
-  const horasUnicas = useMemo(() => {
-    const hs = reservas
-      .map((r) => (r.hora ? r.hora.slice(0, 5) : null))
-      .filter(Boolean);
+  // Index bloqueos fijos: cancha|hora -> {nombre, motivo}
+  const fijosIndex = useMemo(() => {
+    const map = new Map();
+    for (const b of bloqueosFijos || []) {
+      if (b.activo === 0 || b.activo === "0") continue;
 
-    const set = Array.from(new Set(hs));
-    return set.sort((a, b) => valorOrdenHora(a) - valorOrdenHora(b));
-  }, [reservas, configClub, cruzaMedianoche]);
-
-  const obtenerReservaCelda = (hora, cancha) =>
-    reservas.find(
-      (r) =>
-        String(r.id_cancha) === String(cancha) &&
-        r.hora &&
-        r.hora.slice(0, 5) === hora
-    );
-
-  // =========================
-  // Bloqueos fijos: aplica a celda?
-  // =========================
-  const obtenerFijoCelda = (hora, cancha) => {
-    if (!fechaAdmin || !bloqueosFijos?.length) return null;
-
-    const dia = getDiaSemana1a7(fechaAdmin);
-    const hCeldaMin = hhmmToMin(hora);
-
-    for (const b of bloqueosFijos) {
-      if (String(b.activo ?? 1) === "0") continue;
-
-      // Si bloqueo fijo es de cancha específica, matchea; si es null => todas
-      if (b.id_cancha && String(b.id_cancha) !== String(cancha)) continue;
-
-      // Días de semana
       const dias = String(b.dias_semana || "")
         .split(",")
-        .map((x) => Number(String(x).trim()))
+        .map((x) => parseInt(x.trim(), 10))
         .filter(Boolean);
 
-      if (!dias.includes(dia)) continue;
+      if (!dias.includes(dow)) continue;
 
-      const desde = hhmmToMin(String(b.hora_desde || "").slice(0, 5));
-      const hasta = hhmmToMin(String(b.hora_hasta || "").slice(0, 5));
-      if (desde === null || hasta === null || hCeldaMin === null) continue;
+      const hDesde = normalizarHora(b.hora_desde);
+      const hHasta = normalizarHora(b.hora_hasta);
 
-      // Hora dentro del rango: [desde, hasta)
-      if (hCeldaMin >= desde && hCeldaMin < hasta) {
-        return b;
+      // aplica a una cancha o a todas
+      const canchas = b.id_cancha ? [Number(b.id_cancha)] : [1, 2, 3];
+
+      for (const idCancha of canchas) {
+        for (const h of horas) {
+          if (estaDentroRango(h, hDesde, hHasta)) {
+            const key = `${idCancha}|${h}`;
+            map.set(key, b);
+          }
+        }
       }
     }
+    return map;
+  }, [bloqueosFijos, horas, dow]);
 
-    return null;
-  };
+  const canchas = [1, 2, 3];
 
-  // =========================
-  // UI helpers
-  // =========================
-  const chipEstado = (estado) => {
+  const estadoBadge = (estado) => {
     const e = String(estado || "").toLowerCase();
-    if (e === "confirmada")
-      return "bg-emerald-500/15 text-emerald-200 border-emerald-500/25";
-    if (e === "pendiente")
-      return "bg-sky-500/15 text-sky-200 border-sky-500/25";
-    if (e === "cancelada")
-      return "bg-red-500/15 text-red-200 border-red-500/25";
-    if (e === "fijo")
-      return "bg-violet-500/15 text-violet-200 border-violet-500/25";
-    return "bg-slate-500/10 text-slate-200 border-slate-500/20";
+    if (e === "confirmada") return "bg-emerald-500/15 text-emerald-200 border-emerald-500/25";
+    if (e === "pendiente") return "bg-amber-500/15 text-amber-200 border-amber-500/25";
+    if (e === "cancelada") return "bg-slate-500/10 text-slate-300 border-slate-500/20";
+    return "bg-indigo-500/10 text-indigo-200 border-indigo-500/20";
   };
 
-  if (!reservas || reservas.length === 0) {
-    return (
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-100">
-              Calendario del día
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">
-              {fechaAdmin || "—"} · Vista por cancha y hora
-            </p>
-          </div>
-
-          {adminToken ? (
-            <button
-              onClick={cargarBloqueosFijos}
-              disabled={cargandoFijos}
-              className="text-[11px] px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-900 text-slate-200 border border-slate-800 disabled:opacity-60"
-            >
-              {cargandoFijos ? "Cargando..." : "Actualizar fijos ↻"}
-            </button>
-          ) : null}
-        </div>
-
-        <p className="text-sm text-slate-500 mt-4">
-          No hay reservas para mostrar en esta fecha.
-          <br />
-          <span className="text-xs">
-            (Los bloqueos fijos se ven cuando el calendario tiene horas/canchas
-            para renderizar.)
-          </span>
-        </p>
-      </div>
-    );
-  }
+  const tarjeta = (contenido, variant = "libre") => {
+    if (variant === "ocupado") {
+      return "bg-slate-900 border-slate-700/70 hover:border-slate-600";
+    }
+    if (variant === "fijo") {
+      return "bg-indigo-950/40 border-indigo-500/25 hover:border-indigo-400/30";
+    }
+    return "bg-slate-950/40 border-slate-800 hover:border-slate-700";
+  };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-      <div className="flex items-start justify-between gap-3">
+    <div className="space-y-4">
+      <div className="flex items-end justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-slate-100">
-            Calendario del día
-          </h3>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            {fechaAdmin} · Vista por cancha y hora
+          <h3 className="text-lg font-extrabold text-white">Calendario</h3>
+          <p className="text-xs text-slate-400">
+            {fechaAdmin ? `Fecha: ${fechaAdmin}` : "Elegí una fecha"} · Mostrando reservas + bloqueos fijos
           </p>
-          <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
-            <span
-              className={`px-2 py-0.5 rounded-full border ${chipEstado(
-                "confirmada"
-              )}`}
-            >
-              Confirmada
-            </span>
-            <span
-              className={`px-2 py-0.5 rounded-full border ${chipEstado(
-                "pendiente"
-              )}`}
-            >
-              Pendiente
-            </span>
-            <span
-              className={`px-2 py-0.5 rounded-full border ${chipEstado(
-                "cancelada"
-              )}`}
-            >
-              Cancelada
-            </span>
-            <span
-              className={`px-2 py-0.5 rounded-full border ${chipEstado("fijo")}`}
-            >
-              Fijo
-            </span>
-          </div>
         </div>
 
-        {adminToken ? (
-          <button
-            onClick={cargarBloqueosFijos}
-            disabled={cargandoFijos}
-            className="text-[11px] px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-900 text-slate-200 border border-slate-800 disabled:opacity-60"
-            title="Recargar bloqueos fijos"
-          >
-            {cargandoFijos ? "Cargando..." : "Actualizar fijos ↻"}
-          </button>
-        ) : null}
+        <div className="hidden sm:flex gap-2 text-[11px]">
+          <span className="px-2 py-1 rounded-full border bg-emerald-500/10 text-emerald-200 border-emerald-500/20">
+            Confirmada
+          </span>
+          <span className="px-2 py-1 rounded-full border bg-amber-500/10 text-amber-200 border-amber-500/20">
+            Pendiente
+          </span>
+          <span className="px-2 py-1 rounded-full border bg-indigo-500/10 text-indigo-200 border-indigo-500/20">
+            Fijo
+          </span>
+          <span className="px-2 py-1 rounded-full border bg-slate-500/10 text-slate-200 border-slate-500/20">
+            Libre
+          </span>
+        </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-slate-800">
-        <table className="min-w-full text-xs border-separate border-spacing-y-1">
-          <thead className="sticky top-0 bg-slate-950/90 backdrop-blur border-b border-slate-800">
-            <tr>
-              <th className="text-left text-[10px] text-slate-400 uppercase tracking-wider px-3 py-3">
-                Hora
-              </th>
-              {canchasUnicas.map((cancha) => (
-                <th
-                  key={`head-cancha-${cancha}`}
-                  className="text-center text-[10px] text-slate-300 uppercase tracking-wider px-3 py-3"
-                >
-                  Cancha {cancha}
-                </th>
-              ))}
-            </tr>
-          </thead>
+      <div className="overflow-x-auto">
+        <div className="min-w-[780px]">
+          {/* Header */}
+          <div className="grid grid-cols-[120px_repeat(3,1fr)] gap-2 sticky top-0 z-10">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2">
+              <p className="text-[11px] font-bold text-slate-300 uppercase tracking-widest">Hora</p>
+            </div>
+            {canchas.map((c) => (
+              <div
+                key={c}
+                className="rounded-xl border border-slate-800 bg-slate-950/80 px-3 py-2"
+              >
+                <p className="text-[11px] font-bold text-slate-200">
+                  Cancha {c}
+                </p>
+                <p className="text-[10px] text-slate-500">Disponibilidad del día</p>
+              </div>
+            ))}
+          </div>
 
-          <tbody className="px-2">
-            {horasUnicas.map((hora) => (
-              <tr key={`fila-hora-${hora}`} className="group">
-                <td className="align-top px-3 py-1.5 text-[11px] text-slate-200 font-mono">
-                  <div className="bg-slate-950/60 border border-slate-800 rounded-lg px-2 py-2 inline-flex">
-                    {hora}
-                  </div>
-                </td>
+          {/* Body */}
+          <div className="mt-2 grid gap-2">
+            {horas.map((h) => (
+              <div key={h} className="grid grid-cols-[120px_repeat(3,1fr)] gap-2">
+                {/* Hora */}
+                <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-3 flex items-center">
+                  <span className="text-sm font-extrabold text-white">
+                    {horaLabel(h)}
+                  </span>
+                </div>
 
-                {canchasUnicas.map((cancha) => {
-                  const r = obtenerReservaCelda(hora, cancha);
+                {/* Canchas */}
+                {canchas.map((idCancha) => {
+                  const key = `${idCancha}|${h}`;
+                  const r = reservasIndex.get(key);
 
-                  // Si no hay reserva, probamos bloqueo fijo
-                  const fijo = !r ? obtenerFijoCelda(hora, cancha) : null;
+                  // si hay reserva (no cancelada) manda por encima del fijo
+                  const estado = String(r?.estado || "").toLowerCase();
+                  const estaOcupada = r && estado !== "cancelada";
 
-                  if (!r && !fijo) {
+                  if (estaOcupada) {
+                    const nombre = r?.nombre_cliente || "Reservado";
                     return (
-                      <td
-                        key={`celda-${hora}-${cancha}`}
-                        className="align-top px-2 py-1.5"
+                      <div
+                        key={idCancha}
+                        className={`rounded-xl border px-3 py-3 transition-colors ${tarjeta("", "ocupado")}`}
                       >
-                        <div className="border border-dashed border-slate-800 rounded-xl h-14 flex items-center justify-center text-[11px] text-slate-500 bg-slate-950/20 group-hover:bg-slate-950/35 transition">
-                          Libre
-                        </div>
-                      </td>
-                    );
-                  }
-
-                  // Celda ocupada por reserva real
-                  if (r) {
-                    const estado = String(r.estado || "").toLowerCase();
-                    const chip = chipEstado(estado);
-
-                    return (
-                      <td
-                        key={`celda-${hora}-${cancha}`}
-                        className="align-top px-2 py-1.5"
-                      >
-                        <div className="h-14 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2 flex flex-col justify-center gap-1 group-hover:bg-slate-950/60 transition">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[12px] font-semibold text-slate-100 truncate">
-                              {r.nombre_cliente || "Sin nombre"}
-                            </span>
-                            <span
-                              className={`text-[10px] px-2 py-0.5 rounded-full border ${chip} whitespace-nowrap`}
-                            >
-                              {estado || "—"}
-                            </span>
-                          </div>
-
-                          <div className="text-[10px] text-slate-300/80 truncate">
-                            {r.telefono_cliente ? `📞 ${r.telefono_cliente}` : ""}
-                          </div>
-                        </div>
-                      </td>
-                    );
-                  }
-
-                  // Celda ocupada por fijo
-                  const estado = "fijo";
-                  const chip = chipEstado(estado);
-
-                  return (
-                    <td
-                      key={`celda-${hora}-${cancha}`}
-                      className="align-top px-2 py-1.5"
-                    >
-                      <div className="h-14 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2 flex flex-col justify-center gap-1 group-hover:bg-slate-950/60 transition">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[12px] font-semibold text-slate-100 truncate">
-                            {fijo?.nombre || "Fijo"}
-                          </span>
-                          <span
-                            className={`text-[10px] px-2 py-0.5 rounded-full border ${chip} whitespace-nowrap`}
-                          >
-                            Fijo
+                          <p className="text-sm font-bold text-white truncate">{nombre}</p>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full border ${estadoBadge(r.estado)}`}>
+                            {String(r.estado || "reservado").toUpperCase()}
                           </span>
                         </div>
 
-                        <div className="text-[10px] text-slate-300/80 truncate">
-                          {fijo?.telefono ? `📞 ${fijo.telefono}` : fijo?.motivo ? `📝 ${fijo.motivo}` : ""}
-                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          {r?.telefono_cliente ? `Tel: ${r.telefono_cliente}` : "—"}
+                        </p>
+
+                        {/* sin mostrar grupo_id (queda feo) */}
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Turno reservado
+                        </p>
                       </div>
-                    </td>
+                    );
+                  }
+
+                  // si no hay reserva, chequeamos fijo
+                  const fijo = fijosIndex.get(key);
+                  if (fijo) {
+                    return (
+                      <div
+                        key={idCancha}
+                        className={`rounded-xl border px-3 py-3 transition-colors ${tarjeta("", "fijo")}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-bold text-indigo-100 truncate">
+                            {fijo.nombre || "Horario fijo"}
+                          </p>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full border bg-indigo-500/10 text-indigo-200 border-indigo-500/20">
+                            FIJO
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          {fijo.motivo ? fijo.motivo : "Bloqueo semanal"}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  // libre
+                  return (
+                    <div
+                      key={idCancha}
+                      className={`rounded-xl border px-3 py-3 transition-colors ${tarjeta("", "libre")}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-slate-200">Libre</p>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full border bg-slate-500/10 text-slate-200 border-slate-500/20">
+                          OK
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Disponible para reservar
+                      </p>
+                    </div>
                   );
                 })}
-              </tr>
+              </div>
             ))}
-          </tbody>
-        </table>
+          </div>
+
+          <p className="text-[11px] text-slate-500 mt-3">
+            Tip: si un bloqueo fijo coincide con una reserva, se mostrará la reserva (tiene prioridad).
+          </p>
+        </div>
       </div>
     </div>
   );
 }
+
